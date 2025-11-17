@@ -48,6 +48,7 @@
     *   执行`sret`指令。CPU从S模式切换到U模式，PC跳转到`sepc`指定的地址。
     *   **用户应用程序开始执行。**
 
+
 ### PKE系统调用处理流程
 
 这个流程描述了用户程序执行`ecall`指令，内核完成服务并返回用户程序的完整过程。
@@ -287,3 +288,247 @@ $ make gdb_clean
   $ make objdump
   ```
 - 可以直接使用`spike`命令行工具运行程序并查看输出
+
+----
+
+# lab1_2 异常处理
+好的，我们来详细解析 **lab1_2 异常处理** 的思路、实现步骤以及涉及的核心知识点。
+
+### 实验目标解析
+
+lab1_2的核心目标是让我们的PKE操作系统内核能够正确处理一个来自用户程序的**异常（Exception）**。
+
+具体来说，给定应用 `app_illegal_instruction.c` 会尝试在权限较低的用户模式（U-mode）执行一条只有在更高权限模式下才能执行的特权指令 (`csrw sscratch, 0`)。这种行为是非法的，CPU硬件会检测到这个错误，并触发一个“非法指令异常”。
+
+我们的任务就是修改PKE内核，捕获这个异常，打印出明确的错误信息（"Illegal instruction!"），然后安全地终止系统，而不是像初始代码那样直接 `panic` 崩溃。
+
+### 核心知识点
+
+要完成这个实验，需要理解以下几个关键概念：
+
+1.  **RISC-V特权级 (Privilege Levels)**：
+    *   **U-mode (User)**：用户模式，权限最低，用于运行应用程序。不能执行访问物理内存、修改特权寄存器等敏感操作。
+    *   **S-mode (Supervisor)**：监督模式，权限较高，用于运行操作系统内核的大部分功能。
+    *   **M-mode (Machine)**：机器模式，权限最高，用于最底层的硬件初始化和管理，如多核启动、中断/异常的最终分发等。
+
+2.  **异常 (Exception)**：由当前正在执行的指令同步（synchronously）引发的非正常控制流转移。例如：非法指令、访问不存在的内存地址、除零等。这与**中断（Interrupt）**不同，中断是异步（asynchronously）的，由外部事件（如定时器、I/O设备）引发。
+
+3.  **陷阱处理 (Trap Handling)**：当异常或中断发生时，CPU会暂停当前执行流，根据预设的配置，跳转到一个特定的地址去执行一段被称为“陷阱处理程序”（Trap Handler）的代码。这个过程通常伴随着特权级的提升（例如从U-mode -> S-mode或M-mode）。
+
+4.  **陷阱委托 (Trap Delegation)**：RISC-V的一个重要机制。默认情况下，所有陷阱（异常和中断）都由最高权限的M-mode处理。但是，M-mode可以通过设置 `medeleg` (Machine Exception Delegation) 和 `mideleg` (Machine Interrupt Delegation) 寄存器，将特定类型的陷阱“委托”给S-mode处理。**如果一个陷阱没有被委托，那么它必须在M-mode中处理。**
+
+### 详细思路与代码追踪
+
+让我们跟着代码的执行流，一步步分析问题所在并找到解决方案。
+
+#### 第一步：分析异常的源头
+
+在 `user/app_illegal_instruction.c` 中，第13行代码是关键：
+```c
+asm volatile("csrw sscratch, 0");
+```
+*   `csrw` 是一条写控制状态寄存器（CSR）的指令。
+*   `sscratch` 是一个S-mode的暂存寄存器。
+*   应用程序运行在U-mode，尝试写入一个S-mode的寄存器，这违反了RISC-V的特权级保护机制。
+*   因此，当CPU执行到这条指令时，会立即触发一个“非法指令异常” (`Illegal Instruction Exception`)。
+
+#### 第二步：确定陷阱由哪个模式处理
+
+当异常发生时，CPU需要决定跳转到S-mode的陷阱处理程序还是M-mode的。这取决于 `medeleg` 寄存器是否设置了委托该异常。
+
+我们查看内核初始化代码 `kernel/machine/minit.c` 中的 `delegate_traps()` 函数：
+```c
+// kernel/machine/minit.c
+static void delegate_traps() {
+  // ...
+  uintptr_t exceptions = (1U << CAUSE_MISALIGNED_FETCH) | (1U << CAUSE_FETCH_PAGE_FAULT) |
+                         (1U << CAUSE_BREAKPOINT) | (1U << CAUSE_LOAD_PAGE_FAULT) |
+                         (1U << CAUSE_STORE_PAGE_FAULT) | (1U << CAUSE_USER_ECALL);
+
+  write_csr(medeleg, exceptions);
+  // ...
+}
+```
+`exceptions` 这个位掩码（bitmask）定义了所有要从M-mode委托给S-mode的异常类型。我们查看 `kernel/riscv.h` 可以找到 `CAUSE_ILLEGAL_INSTRUCTION` 对应的值是 `2`。
+
+很明显，`(1U << CAUSE_ILLEGAL_INSTRUCTION)` **并不在** `exceptions` 这个位掩码中。这意味着**非法指令异常没有被委托给S-mode**。
+
+**结论：** 这个异常必须在最高权限的 **M-mode** 中处理。
+
+#### 第三步：追踪M-mode的陷阱处理流程
+
+1.  **陷阱入口 (mtvec)**：CPU在M-mode遇到陷阱时，会跳转到 `mtvec` 寄存器指向的地址。在 `kernel/machine/minit.c` 的 `m_start` 函数中，内核已经设置好了这个入口：
+    ```c
+    // kernel/machine/minit.c
+    write_csr(mtvec, (uint64)mtrapvec);
+    ```
+    它指向了 `kernel/machine/mtrap_vector.S` 中定义的 `mtrapvec`。
+
+2.  **汇编处理程序 (`mtrapvec`)**：这个汇编函数负责：
+    *   保存所有通用寄存器（上下文），防止被C函数破坏。
+    *   设置M-mode自己使用的栈。
+    *   调用C语言编写的核心处理函数 `handle_mtrap`。
+    *   `handle_mtrap` 返回后，恢复所有寄存器。
+    *   执行 `mret` 指令返回到异常发生前的地方。
+
+3.  **C语言处理程序 (`handle_mtrap`)**：这是我们需要修改的地方。代码位于 `kernel/machine/mtrap.c`：
+    ```c
+    // kernel/machine/mtrap.c
+    void handle_mtrap() {
+      uint64 mcause = read_csr(mcause);
+      switch (mcause) {
+        // ... 其他 case ...
+        case CAUSE_ILLEGAL_INSTRUCTION:
+          // TODO (lab1_2): call handle_illegal_instruction to implement ...
+          panic( "call handle_illegal_instruction to accomplish illegal instruction interception for lab1_2.\n" );
+          break;
+        // ... 其他 case ...
+      }
+    }
+    ```
+    *   函数首先读取 `mcause` 寄存器，这个寄存器记录了陷阱发生的原因。
+    *   通过 `switch` 语句，代码找到了匹配 `CAUSE_ILLEGAL_INSTRUCTION` 的分支。
+    *   当前实现是直接调用 `panic`，这会导致程序立即停止并打印我们看到的提示信息。这就是实验运行结果的来源。
+
+#### 第四步：实现解决方案
+
+实验指导和 `TODO` 注释已经给出了明确的指示：将 `panic` 调用替换为对 `handle_illegal_instruction()` 函数的调用。
+
+我们先找到 `handle_illegal_instruction()` 函数的定义，它也在 `kernel/machine/mtrap.c` 文件中：
+```c
+// kernel/machine/mtrap.c
+static void handle_illegal_instruction() {
+  sprint("Illegal instruction!\n");
+  do_exit(-1);
+}
+```
+这个函数做了两件事：
+1.  `sprint("Illegal instruction!\n")`: 打印出我们期望看到的错误信息。
+2.  `do_exit(-1)`: 调用系统退出函数，并传入-1作为退出码，安全地关闭系统。
+
+现在，我们只需要进行修改即可。
+
+**修改文件**: `kernel/machine/mtrap.c`
+
+**修改前**:
+```c
+    case CAUSE_ILLEGAL_INSTRUCTION:
+      // TODO (lab1_2): call handle_illegal_instruction to implement illegal instruction
+      // interception, and finish lab1_2.
+      panic( "call handle_illegal_instruction to accomplish illegal instruction interception for lab1_2.\n" );
+
+      break;
+```
+
+**修改后**:
+```c
+    case CAUSE_ILLEGAL_INSTRUCTION:
+      // TODO (lab1_2): call handle_illegal_instruction to implement illegal instruction
+      // interception, and finish lab1_2.
+      // panic( "call handle_illegal_instruction to accomplish illegal instruction interception for lab1_2.\n" );
+      handle_illegal_instruction(); // 将 panic 替换为函数调用
+      break;
+```
+
+### 实验步骤与验证
+
+1.  **切换分支并合并**：
+    ```bash
+    # 确保 lab1_1 的工作已提交
+    $ git commit -a -m "my work on lab1_1 is done."
+    
+    # 切换到 lab1_2 分支
+    $ git checkout lab1_2_exception
+    
+    # 合并 lab1_1 的修改
+    $ git merge lab1_1_syscall -m "continue to work on lab1_2"
+    ```
+
+2.  **修改代码**：
+    打开 `kernel/machine/mtrap.c` 文件，找到 `handle_mtrap` 函数中的 `switch` 语句，将 `case CAUSE_ILLEGAL_INSTRUCTION:` 分支下的 `panic(...)` 调用替换为 `handle_illegal_instruction();`。
+
+3.  **编译和运行**：
+    ```bash
+    $ make clean; make
+    $ spike ./obj/riscv-pke ./obj/app_illegal_instruction
+    ```
+
+4.  **验证结果**：
+    运行后，你将看到如下输出，这与实验要求的预期结果完全一致：
+    ```bash
+    In m_start, hartid:0
+    HTIF is available!
+    (Emulated) memory size: 2048 MB
+    Enter supervisor mode...
+    Application: ./obj/app_illegal_instruction
+    Application program entry point (virtual address): 0x0000000081000000
+    Switching to user mode...
+    Going to hack the system by running privilege instructions.
+    Illegal instruction!
+    System is shutting down with exit code -1.
+    ```
+    可以看到，内核成功捕获了非法指令异常，打印了正确的提示信息，然后正常关闭，实验完成。
+
+5.  **提交工作**：
+    ```bash
+    $ git commit -a -m "my work on lab1_2 is done."
+    ```
+
+### 总结
+
+lab1_2 是一个理解异常处理和特权级机制的绝佳练习。通过这个实验，我们深入了解了：
+-   用户程序如何因为执行非法操作而触发硬件异常。
+-   RISC-V的陷阱委托机制如何决定异常是在S-mode还是M-mode处理。
+-   内核中M-mode陷阱处理程序的完整工作流程：从汇编入口到C语言分发。
+-   如何通过修改内核代码，将一个致命的 `panic` 替换为一个优雅的、信息明确的异常处理流程。
+
+### g_itrgrame
+#### g_itrframe是什么
+
+g_itrframe是一个全局的中断帧（interrupt frame）结构体，定义在[minit.c](file:///app/riscv-pke/kernel/machine/minit.c)中：
+
+```c
+riscv_regs g_itrframe;
+```
+
+它是一个[riscv_regs](file:///app/riscv-pke/kernel/riscv.h#L137-L169)类型的全局变量，用于在M模式（机器模式）下发生中断或异常时保存处理器寄存器状态。在[mtrap_vector.S](file:///app/riscv-pke/kernel/machine/mtrap_vector.S)中，当M模式陷阱发生时，会将所有寄存器保存到这个结构体中。
+
+#### trapframe是什么
+
+trapframe是用户进程的陷阱帧结构体，定义在[process.h](file:///app/riscv-pke/kernel/process.h)中：
+
+```c
+typedef struct trapframe_t {
+  // space to store context (all common registers)
+  riscv_regs regs;
+
+  // process's "user kernel" stack
+  uint64 kernel_sp;
+  // pointer to smode_trap_handler
+  uint64 kernel_trap;
+  // saved user process counter
+  uint64 epc;
+} trapframe;
+```
+
+每个用户进程都有一个与之关联的trapframe，用于在用户态发生陷阱（如系统调用）时保存进程的上下文状态。
+
+#### 两者之间的关系
+
+1. **作用域不同**：
+   - g_itrframe是全局的，用于M模式（机器模式）下的中断处理
+   - trapframe是每个进程一个，用于S模式（监督模式）下的陷阱处理
+
+2. **使用场景不同**：
+   - g_itrframe用于处理机器级别的中断，如硬件中断
+   - trapframe用于处理用户进程的系统调用、页面错误等
+
+3. **结构差异**：
+   - g_itrframe只是[riscv_regs](file:///app/riscv-pke/kernel/riscv.h#L137-L169)结构体，保存寄存器状态
+   - trapframe除了包含寄存器状态外，还包含内核栈指针、陷阱处理函数指针和程序计数器等额外信息
+
+4. **初始化方式不同**：
+   - g_itrframe的地址通过[write_csr(mscratch, &g_itrframe)](file:///app/riscv-pke/kernel/riscv.h#L91-L92)设置到mscratch寄存器中
+   - trapframe的地址通过[return_to_user](file:///app/riscv-pke/kernel/strap_vector.S#L44-L55)函数设置到sscratch寄存器中
+
+总的来说，g_itrframe和trapframe都是用于保存处理器状态的结构体，但它们服务于不同级别的异常处理机制。g_itrframe处理底层的机器模式中断，而trapframe处理用户进程的监督模式陷阱。
