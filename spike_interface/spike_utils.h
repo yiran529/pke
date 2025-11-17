@@ -24,6 +24,12 @@ void shutdown(int) __attribute__((noreturn));
     poweroff(-1);                                                  \
   })
 
+/**
+ * @brief Prints the panic message using sprint (which outputs to the console) and then halts the system. 
+ * Takes a format string s and variable arguments (variadic function).
+ * @param s 
+ * @param ... 
+ */
 void do_panic(const char* s, ...) __attribute__((noreturn));
 void kassert_fail(const char* s) __attribute__((noreturn));
 
