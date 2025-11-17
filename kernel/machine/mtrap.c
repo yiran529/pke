@@ -16,6 +16,10 @@ static void handle_misaligned_store() { panic("Misaligned AMO!"); }
 
 // added @lab1_3
 static void handle_timer() {
+  /*handle_timer()函数会（在~21行）先设置下一次timer（再次）触发的时间为当前时间+TIMER_INTERVAL，
+  并在~24行对SIP（Supervisor Interrupt Pending，即S模式的中断等待寄存器）寄存器进行设置，将其中的SIP_SSIP位进行设置，完成后返回。
+  至此，时钟中断在M态的处理就结束了，剩下的动作交给S态继续处理。而handle_timer()在第~23行的动作，
+  会导致PKE操作系统内核在S模式收到一个来自M态的时钟中断请求（CAUSE_MTIMER_S_TRAP） */
   int cpuid = 0;
   // setup the timer fired at next time (TIMER_INTERVAL from now)
   *(uint64*)CLINT_MTIMECMP(cpuid) = *(uint64*)CLINT_MTIMECMP(cpuid) + TIMER_INTERVAL;
