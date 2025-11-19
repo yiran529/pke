@@ -22,8 +22,10 @@ static void handle_syscall(trapframe *tf) {
   // kernel/syscall.c) to conduct real operations of the kernel side for a syscall.
   // IMPORTANT: return value should be returned to user app, or else, you will encounter
   // problems in later experiments!
-  panic( "call do_syscall to accomplish the syscall and lab1_1 here.\n" );
-
+  /// panic( "call do_syscall to accomplish the syscall and lab1_1 here.\n" );
+  tf->regs.a0 = do_syscall(
+      tf->regs.a0, tf->regs.a1, tf->regs.a2, tf->regs.a3,
+      tf->regs.a4, tf->regs.a5, tf->regs.a6, tf->regs.a7);
 }
 
 //
@@ -37,8 +39,9 @@ void handle_mtimer_trap() {
   // TODO (lab1_3): increase g_ticks to record this "tick", and then clear the "SIP"
   // field in sip register.
   // hint: use write_csr to disable the SIP_SSIP bit in sip.
-  panic( "lab1_3: increase g_ticks by one, and clear SIP field in sip register.\n" );
-
+  // panic( "lab1_3: increase g_ticks by one, and clear SIP field in sip register.\n" );
+  g_ticks++;
+  write_csr(sip, read_csr(sip) & ~SIP_SSIP);
 }
 
 //
@@ -49,6 +52,11 @@ void smode_trap_handler(void) {
   // make sure we are in User mode before entering the trap handling.
   // we will consider other previous case in lab1_3 (interrupt).
   if ((read_csr(sstatus) & SSTATUS_SPP) != 0) panic("usertrap: not from user mode");
+
+  // sprint("\n>>> Trapped to KERNEL mode: satp already changed <<<\n");
+  // sprint("Now: satp = 0x%lx (kernel page table)\n", read_csr(satp));
+  // sprint("User pagetable was: 0x%lx\n", (uint64)current->pagetable);
+  // sprint("Result: MMU can't auto-translate user addresses anymore!\n\n");
 
   assert(current);
   // save user process counter.
