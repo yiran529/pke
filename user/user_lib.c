@@ -56,7 +56,7 @@ int exit(int code) {
 // lib call to naive_malloc
 //
 void* naive_malloc() {
-  return (void*)do_user_call(SYS_user_allocate_page, 0, 0, 0, 0, 0, 0, 0);
+  return (void*)(uint64)do_user_call(SYS_user_allocate_page, 0, 0, 0, 0, 0, 0, 0); // ?? (uint64)是自己加的
 }
 
 //
