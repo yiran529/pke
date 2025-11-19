@@ -681,3 +681,465 @@ void handle_mtimer_trap() {
   // clear the software interrupt pending bit in sip
   write_csr(sip, read_csr(sip) & ~SIP_SSIP);
 }
+```
+
+# lab2
+
+### 内存布局
+Summarized conversation history好的。先给出一张对照表，按区域汇总 lab1（Bare 直映射）与 lab2_1（SV39 分页）下的内存布局与权限差异，尽量贴合附件描述。
+
+| 区域/对象 | lab1 映射与地址 | lab2_1 映射与地址 | 权限/可见性 | 说明 |
+|---|---|---|---|---|
+| 物理内存范围 | PA: [0x80000000, 0x80000000+size) | 同左 | — | spike 模拟内存从 0x80000000 起 |
+| 内核镜像 .text/.rodata | VA=PA，从 0x80000000 起 | VA≈PA（内核页表直映射） | S，.text RX，.rodata R | 由 `kernel.lds` 固定起址 |
+| 内核 .data/.bss | VA=PA，紧随内核代码段 | VA≈PA（直映射） | S，RW | |
+| HTIF 内存窗口 | VA=PA，位于内核直映射区域 | VA≈PA（直映射） | S，RW | 由 DTS 发现并用于主机交互（打印/文件） |
+| S 态陷入向量 `stvec` | 指向内核直映射中的向量页 | 同左（在内核页表中映射） | S，RX | `smode_trap_vector` |
+| M 态陷入向量 `mtvec` | 指向内核直映射中的向量页 | 同左 | M，RX | `mtrapvec` |
+| 每进程内核栈 kstack | VA=PA，内核直映射页 | VA≈PA（直映射） | S，RW | U→S 陷入后切到该栈 |
+| 每进程 trapframe | VA=PA，内核直映射页/结构体 | VA≈PA（直映射） | S，RW | 保存通用寄存器、`kernel_sp/kernel_satp/epc` |
+| 内核页表根 | 未使用分页 | `satp(kernel)` 指向直映射页表 | S | 仅内核使用，VA≈PA |
+| 用户代码/数据段 | VA=PA（由 ELF vaddr，例：0x81000000） | VA=ELF vaddr → PA=分配页，经 user 页表映射 | U，段权限 R/X/W | 内核访问需手工翻译 |
+| 用户栈 | VA=PA（固定/预置） | VA=用户空间地址 → PA=分配页，经 user 页表映射 | U，RW | lab2_3 可按缺页增长 |
+| 用户页表根 | 未使用 | `satp(user)` 指向用户页表根（物理页） | S 持有/U 不可见 | 进出用户态切换 `satp` |
+| 共享/公共页（如陷入向量页） | 直接位于内核空间 | 在内核页表映射，必要时在用户不可见 | 主要 S 可见 | 保证陷入/返回路径可用 |
+
+补充要点
+- 页大小: 4KB；SV39 三级页表（lab2_1）。
+- `satp`: 切到用户态前写入 `satp(user)`，陷入后先切回 `satp(kernel)`；内核访问用户指针需走软件翻译（如 `user_va_to_pa`）。
+- 地址示例: 内核起始 0x80000000；lab1 示例应用入口 0x81000000（由 `user.lds`）。
+
+### 应用进程映射方式
+#### 1. 用户空间（低地址）
+这是应用程序自己“看”到的、可以自由使用的内存区域。
+
+*   **代码段/数据段 (Code/Data)**
+    *   **地址**：通常从 `0x10000` (64KB) 开始。
+    *   **来源**：这是您编译出的 ELF 可执行文件（如 `app_helloworld`）的内容。
+    *   **映射**：内核读取 ELF 文件，分配物理页，将这些物理页映射到虚拟地址 `0x10000` 处。
+    *   **权限**：用户可读、可执行（R/X）。
+
+*   **用户栈 (User Stack)**
+    *   **地址**：固定在 `0x7ffff000` (约 2GB 处) 以下。
+    *   **来源**：内核在加载程序时，专门分配了一个物理页作为栈。
+    *   **映射**：将这个物理页映射到虚拟地址 `0x7ffff000`。
+    *   **权限**：用户可读、可写（R/W）。
+
+**“低地址”的含义**：相对于 64 位系统的巨大空间，或者相对于内核所在的 `0x80000000` 以上地址，`0x10000` 和 `0x7ffff000` 都属于较低的地址范围。
+
+#### 2. 内核空间（高地址）
+这部分虽然在**用户页表**里有映射，但**用户程序不能直接访问**（因为页表项的 User 权限位是 0）。它们存在于用户页表中的目的是为了**处理中断和异常**。
+
+*   **Trapframe (中断帧)**
+    *   **地址**：通常在 `0x8xxxxxxx` (物理内存直接映射区域)。
+    *   **作用**：当发生系统调用或中断时，CPU 需要一个地方保存用户程序的寄存器（上下文）。
+    *   **为什么在用户页表里？**：当 CPU 刚进入内核态（S 态）但还未切换页表（`satp` 仍指向用户页表）时，代码需要立即保存寄存器。如果用户页表里没有映射这块内存，CPU 就无法写入数据，导致崩溃。
+
+*   **Trap Vector (中断向量代码)**
+    *   **地址**：也在 `0x8xxxxxxx` 区域。
+    *   **作用**：这是处理中断的第一段汇编代码（`smode_trap_vector`）。
+    *   **为什么在用户页表里？**：同理，当发生中断时，CPU 会跳转到这个地址执行指令。如果用户页表里没有映射这段代码，CPU 就会取指失败（Page Fault）。
+
+#### 总结图示
+
+```text
+      虚拟地址 (Virtual Address)              物理地址 (Physical Address)
+      -------------------------              ---------------------------
+ 高   0x8xxxxxxx  [Trap Vector]  ---映射--->  0x8xxxxxxx (内核代码)
+      0x8xxxxxxx  [Trapframe]    ---映射--->  0x8xxxxxxx (内核数据)
+      ...
+      ... (中间巨大的未映射空洞)
+      ...
+      0x7ffff000  [User Stack]   ---映射--->  0x8xxxxxxx (某分配的物理页)
+ 低   0x00010000  [User Code]    ---映射--->  0x8xxxxxxx (某分配的物理页)
+```
+
+**核心逻辑**：
+用户程序只能在“低地址”玩耍。一旦发生中断（如 `ecall`），CPU 跳转到“高地址”的内核代码（Trap Vector），并使用“高地址”的数据区（Trapframe）保存现场，然后再切换到真正的内核页表。
+
+---
+
+# lab2_1
+
+### 1. 问题分析：为什么程序会崩溃？
+
+首先，我们需要理解实验初始状态下，程序为什么无法正常打印 "Hello world!" 并崩溃。
+
+1.  **执行流程**：
+    *   `app_helloworld_no_lds.c` 中的 `main` 函数调用 `printu("Hello world!\n")`。
+    *   `printu` 是一个库函数，它会准备好系统调用号和参数，然后执行 `ecall` 指令，从用户模式（U-mode）陷入到监管者模式（S-mode），也就是PKE内核中。
+    *   内核的 `trap_handler` (位于 `kernel/strap.c`) 会接管，并根据系统调用号，最终调用 `sys_user_print` 函数 (位于 `kernel/syscall.c`)。
+
+2.  **地址空间隔离**：
+    *   **关键点**：Lab 2 开启了Sv39页式虚拟内存管理。这意味着**用户进程**和**操作系统内核**拥有各自独立的虚拟地址空间和页表。
+    *   `printu` 传递给内核的字符串地址（我们称之为 `buf`）是一个**用户虚拟地址**。从实验的运行日志可以看出，用户代码段的虚拟地址从 `0x10000` 开始，所以 "Hello world!" 字符串的虚拟地址也在这个很低的地址范围内。
+    *   内核运行在自己的地址空间中，它对 `0x80000000` 以下的地址没有任何映射（参考图4.4）。当内核中的 `sys_user_print` 函数试图直接访问 `buf` 这个低地址时，MMU会发现内核的页表中没有这个地址的有效映射，从而产生一个缺页异常（Page Fault）。但在我们的PKE内核中，更直接的原因是我们根本没有去访问它，而是先尝试转换它。
+
+3.  **代码定位**：
+    我们查看 `kernel/syscall.c` 中的 `sys_user_print` 函数：
+    ```c
+    21 ssize_t sys_user_print(const char* buf, size_t n) {
+    22   //buf is an address in user space on user stack,
+    23   //so we have to transfer it into phisical address (kernel is running in direct mapping).
+    24   assert( current );
+    25   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
+    26   sprint(pa);
+    27   return 0;
+    28 }
+    ```
+    第25行代码明确地尝试将用户虚拟地址 `buf` 转换为物理地址 `pa`。这个转换是通过调用 `user_va_to_pa` 函数完成的。
+    接着看 `kernel/vmm.c` 中 `user_va_to_pa` 的初始实现：
+    ```c
+    150 void *user_va_to_pa(pagetable_t page_dir, void *va) {
+    ...
+    160   panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
+    161 }
+    ```
+    显然，函数直接调用了 `panic`，导致系统停机并打印出错误信息。这就是我们在初始运行结果中看到 `You have to implement user_va_to_pa ...` 的原因。
+
+我们的任务就是实现 `user_va_to_pa`，让它能正确地完成地址转换。
+
+### 2. 解题思路：如何实现地址转换？
+
+地址转换的本质是模拟硬件MMU（内存管理单元）查询页表的过程。根据 Sv39 的三级页表结构（图4.1），这个过程如下：
+
+1.  从 `satp` 寄存器获取根页表（Page Directory）的物理地址。在我们的函数中，这个地址已经通过参数 `page_dir` 传入了。
+2.  从虚拟地址 `va` 中提取最高9位的 VPN[2]，用它作为索引在根页表中找到对应的页目录项（PDE）。
+3.  检查这个PDE是否有效（Valid位为1）。如果无效，转换失败。
+4.  如果有效，从PDE中提取下一级页表（Page Medium Directory）的物理地址。
+5.  从虚拟地址 `va` 中提取中间9位的 VPN[1]，用它作为索引在第二级页表中找到PDE。
+6.  检查这个PDE是否有效。如果无效，转换失败。
+7.  如果有效，从PDE中提取最后一级页表（Page Table）的物理地址。
+8.  从虚拟地址 `va` 中提取最低9位的 VPN[0]，用它作为索引在末级页表中找到页表项（PTE）。
+9.  检查这个PTE是否有效。如果无效，转换失败。
+10. 如果有效，我们找到了最终的映射！从PTE中提取出物理页号（PPN），将其左移12位得到**物理页的基地址**。
+11. 从虚拟地址 `va` 中提取最低12位的页内偏移（offset）。
+12. **最终物理地址 = 物理页基地址 + 页内偏移**。
+
+这个过程比较繁琐。幸运的是，实验代码已经为我们提供了一个完美的辅助函数 `page_walk`，它封装了上述步骤1到步骤8。
+
+#### 利用 `page_walk`
+
+我们来看一下 `page_walk` 的函数签名 (在 `kernel/vmm.c` 中)：
+`pte_t *page_walk(pagetable_t page_dir, uint64 va, int alloc);`
+
+*   `page_dir`: 根页表的地址。
+*   `va`: 要查找的虚拟地址。
+*   `alloc`: 一个标志。如果为 `1`，在查找过程中如果发现某一级页表不存在，就会分配一个新的物理页作为下一级页表。如果为 `0`，则遇到不存在的页表时直接返回 `NULL`。
+
+在地址翻译的场景下，我们只是查询已有的映射，而不创建新的映射，所以 `alloc` 参数应该传 `0`。
+
+`page_walk` 会返回一个指向**末级页表项（PTE）的指针**。有了这个PTE，我们就可以完成剩下的工作。
+
+#### 完整实现步骤
+
+1.  **调用 `page_walk`**：
+    使用 `page_walk(page_dir, va, 0)` 来获取虚拟地址 `va` 对应的PTE的指针。
+
+2.  **检查 `page_walk` 的返回值**：
+    *   如果返回 `NULL`，说明在遍历页表的过程中，某个中间页表不存在。这意味着该虚拟地址没有被映射。函数应返回 `NULL`。
+    *   如果返回一个有效的指针 `pte`，我们得到了PTE本身。
+
+3.  **检查PTE的有效性**：
+    即使 `page_walk` 返回了PTE的地址，这个PTE本身可能被标记为无效（`V` 位为0）。我们需要检查 `*pte & PTE_V`。
+    *   如果 `V` 位为0，说明映射无效。函数应返回 `NULL`。
+
+4.  **（可选但推荐）进行安全检查**：
+    这是一个从用户空间到内核的调用，我们要翻译的是用户地址。因此，这个地址对应的物理页必须是用户可以访问的（`U` 位为1）。我们需要检查 `*pte & PTE_U`。
+    *   如果 `U` 位为0，说明这是一个内核页，用户不应该能通过这个地址访问它，这是一种潜在的安全问题。函数应返回 `NULL`。
+
+5.  **计算物理地址**：
+    如果所有检查都通过，我们就可以计算最终的物理地址了。
+    *   **提取物理页基地址**：PTE的高44位是物理页号（PPN）。我们可以使用 `riscv.h` 中定义的宏 `PTE2PA(*pte)` 来直接从PTE中提取出4KB对齐的物理页基地址。
+    *   **提取页内偏移**：虚拟地址的低12位就是页内偏移。可以通过 `(uint64)va & (PGSIZE - 1)` 来获得。(`PGSIZE` 是 4096，`PGSIZE - 1` 就是 `0xFFF`)。
+    *   **合并**：将物理页基地址和页内偏移相加，就得到了最终的物理地址。
+
+6.  **返回结果**：
+    将计算出的 `uint64` 类型的物理地址强制转换为 `void *` 类型并返回。
+
+### 3. 代码实现
+
+根据以上思路，我们在 `kernel/vmm.c` 中填充 `user_va_to_pa` 函数。
+
+```c
+// in kernel/vmm.c
+
+#include "riscv.h" // 确保包含了PTE_V, PTE_U, PTE2PA等宏定义
+
+void *user_va_to_pa(pagetable_t page_dir, void *va) {
+  // TODO (lab2_1): implement user_va_to_pa to convert a given user virtual address "va"
+  // to its corresponding physical address, i.e., "pa". To do it, we need to walk
+  // through the page table, starting from its directory "page_dir", to locate the PTE
+  // that maps "va". If found, returns the "pa" by using:
+  // pa = PYHS_ADDR(PTE) + (va - va & (1<<PGSHIFT -1))
+  // Here, PYHS_ADDR() means retrieving the starting address (4KB aligned), and
+  // (va - va & (1<<PGSHIFT -1)) means computing the offset of "va" in its page.
+  // Also, it is possible that "va" is not mapped at all. in such case, we can find
+  // invalid PTE, and should return NULL.
+  
+  uint64 uva = (uint64)va;
+
+  // 1. 使用 page_walk 查找 va 对应的末级页表项(PTE)
+  //    第二个参数为0，表示如果找不到映射，不要创建新的页表
+  pte_t *pte = page_walk(page_dir, uva, 0);
+
+  // 2. 检查 page_walk 的返回值
+  //    如果 pte 为 NULL，表示中间页表不存在，映射无效
+  if (pte == NULL) {
+    return NULL;
+  }
+
+  // 3. 检查 PTE 的有效位 (Valid bit)
+  //    如果 V 位为 0，表示该页表项无效
+  if ((*pte & PTE_V) == 0) {
+    return NULL;
+  }
+
+  // 4. 安全检查：检查 PTE 的用户位 (User bit)
+  //    我们要翻译的是用户地址，所以它必须指向一个用户页
+  if ((*pte & PTE_U) == 0) {
+    return NULL;
+  }
+
+  // 5. 计算物理地址
+  //    PTE2PA(*pte) 从PTE中提取物理页的基地址
+  //    uva & (PGSIZE - 1) 计算页内偏移
+  uint64 pa = PTE2PA(*pte) + (uva & (PGSIZE - 1));
+
+  return (void *)pa;
+}
+```
+
+完成以上代码后，重新 `make clean; make` 并运行，`sys_user_print` 就能成功将用户虚拟地址转换为物理地址，然后 `sprint` 就能根据物理地址找到 "Hello world!\n" 字符串并正确打印。
+完美！日志清楚地证明了整个过程。让我根据实际运行结果做最终总结：
+
+
+### 一些疑问
+#### **1）为什么 buf 地址需要手动转换？**
+
+**答案：因为 `satp` 指向的页表不匹配**
+
+```
+用户态访问 stack_var:
+  satp = 0x8000000000087fbb (用户页表)
+  VA = 0x7fffefec
+  MMU 查用户页表 → 自动找到映射 → 成功 ✅
+
+内核态访问 buf:
+  satp = 0x8000000000087ffe (内核页表) ← 关键差异！
+  VA = 0x7fffee88 (仍是用户虚拟地址)
+  MMU 查内核页表 → 找不到 0x7fff... 的映射 → 失败 ❌
+  
+解决方案：
+  user_va_to_pa(0x87fbb000, buf) ← 手动查用户页表
+  → PA = 0x87fb9e88 → 成功 ✅
+```
+
+**核心原因**：MMU 硬件只会用当前 `satp` 指向的页表，不会自动切换或同时查两个页表。
+
+
+
+#### **2）satp 切换是如何发生的？**
+
+**答案：在汇编代码中通过 `csrw satp` 指令完成**
+
+##### **切换时机 1：进入用户态**
+```assembly
+# kernel/strap_vector.S: 64-66 行
+return_to_user:
+    csrw satp, a1          # 写入用户页表地址
+    sfence.vma zero, zero  # 刷新 TLB
+    ...
+    sret                   # 返回用户态
+```
+
+**调用路径**：
+```
+kernel/process.c: switch_to()
+  ↓ 计算 user_satp = 0x8000000000087fbb
+  ↓ 调用 return_to_user(trapframe, user_satp)
+  ↓
+kernel/strap_vector.S: return_to_user
+  ↓ csrw satp, a1  ← 切换！
+```
+
+##### **切换时机 2：陷入内核态**
+```assembly
+# kernel/strap_vector.S: 46-47 行
+smode_trap_vector:
+    ...
+    ld t1, 272(a0)         # 从 trapframe->kernel_satp 加载
+    csrw satp, t1          # 写入内核页表地址
+    sfence.vma zero, zero  # 刷新 TLB
+    jr t0                  # 跳转到 C 处理函数
+```
+
+**触发路径**：
+```
+用户态执行 ecall
+  ↓ 硬件自动跳转到 stvec (smode_trap_vector)
+  ↓
+kernel/strap_vector.S: smode_trap_vector
+  ↓ 保存用户寄存器
+  ↓ csrw satp, t1  ← 切换！
+  ↓ 跳转到 smode_trap_handler()
+```
+
+**日志证据**：
+```
+Before: satp = 0x8000000000087ffe (kernel)
+After:  satp = 0x8000000000087fbb (user)   ← 切换发生
+```
+
+
+#### **3）哪里显式地为用户态和内核态分配了不同的页表？**
+
+**答案：在内核初始化和进程创建时**
+
+##### **① 内核页表分配**
+```c
+// kernel/kernel.c: 89-92 行
+pmm_init();       // 初始化物理内存管理器
+kern_vm_init();   // 创建内核页表
+enable_paging();  // 启用分页，写 satp
+```
+
+```c
+// kernel/vmm.c: kern_vm_init()
+void kern_vm_init() {
+  pagetable_t t_page_dir = (pagetable_t)alloc_page();  // 分配页表
+  memset(t_page_dir, 0, PGSIZE);
+  
+  // 映射内核代码、数据等
+  kern_vm_map(t_page_dir, KERN_BASE, ...);
+  kern_vm_map(t_page_dir, (uint64)_etext, ...);
+  
+  g_kernel_pagetable = t_page_dir;  // 保存内核页表 ← 关键！
+}
+```
+
+```c
+// kernel/kernel.c: enable_paging()
+void enable_paging() {
+  write_csr(satp, MAKE_SATP(g_kernel_pagetable));  // 启用内核页表
+  flush_tlb();
+}
+```
+
+##### **② 用户页表分配**
+```c
+// kernel/kernel.c: 48-51 行
+void load_user_program(process *proc) {
+  proc->trapframe = (trapframe *)alloc_page();
+  proc->pagetable = (pagetable_t)alloc_page();  // 分配用户页表 ← 关键！
+  memset((void *)proc->pagetable, 0, PGSIZE);
+  
+  // 装载 ELF 时建立映射
+  load_bincode_from_host_elf(proc);  
+    ↓ elf_alloc_mb() 
+    ↓ user_vm_map(proc->pagetable, ...)  // 建立用户代码段映射
+  
+  // 映射用户栈
+  user_vm_map(proc->pagetable, USER_STACK_TOP - PGSIZE, ...);
+}
+```
+
+##### **③ 两个页表的关联**
+```c
+// kernel/process.c: 42 行
+proc->trapframe->kernel_satp = read_csr(satp);  // 保存内核页表地址
+```
+
+**数据结构关系**：
+```
+全局变量:
+  g_kernel_pagetable = 0x87ffe000  ← 内核页表根地址
+
+进程结构:
+  user_app.pagetable = 0x87fbb000  ← 用户页表根地址
+  user_app.trapframe->kernel_satp = MAKE_SATP(g_kernel_pagetable)
+```
+
+
+#### 🎯 **核心流程总结**
+
+```
+启动阶段:
+  kern_vm_init()
+    → 分配 g_kernel_pagetable = 0x87ffe000
+    → 映射内核地址空间
+  
+  load_user_program()
+    → 分配 user_app.pagetable = 0x87fbb000
+    → 映射用户地址空间
+
+运行阶段:
+  switch_to() 
+    → return_to_user(user_satp=0x87fbb)
+    → csrw satp, 0x87fbb  ← 切换到用户页表
+    → sret (进入用户态)
+  
+  用户态执行:
+    → 所有内存访问用 satp=0x87fbb 自动转换 ✅
+  
+  ecall (系统调用):
+    → smode_trap_vector
+    → csrw satp, 0x87ffe  ← 切换回内核页表
+    → smode_trap_handler()
+  
+  内核态处理:
+    → satp=0x87ffe，无法自动转换用户地址
+    → 必须调用 user_va_to_pa(0x87fbb, buf) 手动查询 ✅
+```
+
+#### ✨ **一句话总结**
+
+**两个独立的页表在不同阶段分配（`kern_vm_init` 和 `load_user_program`），通过汇编指令 `csrw satp` 在用户态/内核态之间切换，导致 MMU 只能用当前 `satp` 指向的页表自动转换地址，因此内核访问用户地址时必须手动查询用户页表。**
+
+
+
+### 三个核心栈的解析
+
+当一个用户应用程序（单线程）在PKE内核上运行时，以下三个栈是其生命周期中至关重要的：
+
+#### 1. 用户态栈 (User Stack)
+
+*   **作用域**：用户模式 (U-Mode)
+*   **用途**：这是应用程序自身执行时使用的栈。函数调用、局部变量、参数传递等都发生在这个栈上。
+*   **来源**：在`load_user_program()`函数中为进程分配。文档中提到：
+    ```c
+    // kernel/kernel.c in lab2
+    50   uint64 user_stack = (uint64)alloc_page();       // 为用户栈分配物理页面
+    53   proc->trapframe->regs.sp = USER_STACK_TOP;      // 设置用户栈顶的虚拟地址
+    ```
+    这个栈位于用户进程的虚拟地址空间中（例如，栈顶在`0x7ffff000`），与内核完全隔离。
+
+#### 2. 进程的内核栈 ("用户内核栈", Process's Kernel Stack)
+
+*   **作用域**：监管者模式 (S-Mode)，在处理来自特定进程的陷阱(trap)时使用。
+*   **用途**：当用户程序通过`ecall`（系统调用）、或触发异常、或被外部中断打断时，CPU会从U-Mode切换到S-Mode。为了处理这个陷阱，内核**不会使用用户栈**，而是切换到这个为该进程专门准备的内核栈。这样做可以：
+    1.  **安全隔离**：防止内核受到用户栈的恶意破坏（如栈溢出）。
+    2.  **上下文独立**：每个进程都有自己独立的内核栈，使得在多任务环境下，一个进程在内核中被阻塞时，其内核上下文（函数调用链）可以被完整地保存在自己的内核栈上，而不会影响其他进程。
+*   **来源**：同样在`load_user_program()`中为进程分配，但这个栈是内核可以直接访问的物理地址，不会映射到用户虚拟地址空间。
+    ```c
+    // kernel/kernel.c in lab2
+    49   proc->kstack = (uint64)alloc_page() + PGSIZE;   // 分配并设置进程内核栈的栈顶
+    ```
+    在`smode_trap_vector`中，会执行从用户栈到这个栈的切换。
+
+#### 3. 机器模式栈 (M-mode Stack)
+
+*   **作用域**：机器模式 (M-Mode)
+*   **用途**：用于处理**最高权限**的事件。在PKE中，这包括：
+    1.  **未代理给S模式的异常**：如`lab1_2`中的非法指令异常 (`CAUSE_ILLEGAL_INSTRUCTION`)。
+    2.  **外部中断的初始捕获**：如`lab1_3`中的时钟中断 (`Timer Interrupt`)。中断首先在M-Mode被捕获，然后M-Mode通过写`sip`寄存器的方式，向S-Mode发出一个“软件中断”，将处理权“接力”给S-Mode。
+*   **来源**：这个栈是内核启动时静态分配的，通常称为`stack0`。在`_mentry`中被设置，供所有M-Mode下的陷阱处理程序使用。
+    ```assembly
+    // kernel/machine/mentry.S
+    20     la sp, stack0       # stack0 is statically defined in kernel/machine/minit.c
+    ...
+    28     call m_start
+    ```
+
+---
+

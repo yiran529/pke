@@ -53,6 +53,11 @@ void smode_trap_handler(void) {
   // we will consider other previous case in lab1_3 (interrupt).
   if ((read_csr(sstatus) & SSTATUS_SPP) != 0) panic("usertrap: not from user mode");
 
+  // sprint("\n>>> Trapped to KERNEL mode: satp already changed <<<\n");
+  // sprint("Now: satp = 0x%lx (kernel page table)\n", read_csr(satp));
+  // sprint("User pagetable was: 0x%lx\n", (uint64)current->pagetable);
+  // sprint("Result: MMU can't auto-translate user addresses anymore!\n\n");
+
   assert(current);
   // save user process counter.
   current->trapframe->epc = read_csr(sepc);
