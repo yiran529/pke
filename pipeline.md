@@ -1197,3 +1197,127 @@ proc->trapframe->kernel_satp = read_csr(satp);  // 保存内核页表地址
 
 ---
 
+# lab2_3
+## 异常处理路径（从触发到恢复）
+
+### 1. **异常触发** → CPU 硬件自动处理
+
+```
+用户程序执行非法操作（如访问未映射地址、非法指令、ecall）
+  ↓
+CPU 检测到异常
+  ↓
+CPU 自动操作：
+  - 保存当前 PC 到 sepc（或 mepc，取决于异常级别）
+  - 保存异常原因到 scause（或 mcause）
+  - 保存出错地址到 stval（或 mtval）
+  - 切换特权级（U→S 或 S→M）
+  - 跳转到 stvec（或 mtvec）指向的处理入口
+```
+
+
+### 2. **陷入处理入口** → 汇编代码（Kernel）
+
+#### S 模式异常（系统调用、缺页）
+```
+CPU 跳转到 smode_trap_vector (kernel/strap_vector.S)
+  ↓
+保存所有寄存器到 trapframe
+切换 satp 到内核页表
+切换栈到 proc->kstack
+  ↓
+调用 smode_trap_handler() (C 函数)
+```
+
+#### M 模式异常（非法指令、时钟中断）
+```
+CPU 跳转到 mtrapvec (kernel/machine/mtrap_vector.S)
+  ↓
+保存所有寄存器到 g_itrframe
+切换栈到 stack0
+  ↓
+调用 handle_mtrap() (C 函数)
+```
+
+
+### 3. **分发处理** → Kernel C 代码
+
+#### S 模式：`smode_trap_handler()` (kernel/strap.c)
+```c
+读取 scause 判断异常类型
+  ↓
+switch (scause):
+  case CAUSE_USER_ECALL:
+    → handle_syscall() → do_syscall()
+  case CAUSE_STORE_PAGE_FAULT:
+    → handle_user_page_fault() → 分配页并映射
+  case CAUSE_MTIMER_S_TRAP:
+    → handle_mtimer_trap() → 增加 ticks
+  ↓
+调用 switch_to(current) 准备返回用户态
+```
+
+#### M 模式：`handle_mtrap()` (kernel/machine/mtrap.c)
+```c
+读取 mcause 判断异常类型
+  ↓
+switch (mcause):
+  case CAUSE_ILLEGAL_INSTRUCTION:
+    → handle_illegal_instruction() → panic()
+  case CAUSE_MTIMER:
+    → handle_timer() → 设置 SIP_SSIP 转发给 S 态
+  ↓
+mret 返回（若不 panic）
+```
+
+
+### 4. **返回用户态** → 汇编代码 + CPU
+
+```
+switch_to() 设置 trapframe 各字段
+  ↓
+调用 return_to_user (kernel/strap_vector.S)
+  ↓
+恢复 trapframe 中的寄存器
+写 satp = 用户页表
+  ↓
+sret (CPU 指令)
+  ↓
+CPU 自动操作：
+  - 从 sepc 恢复 PC
+  - 切换特权级（S→U）
+  - 继续执行用户程序
+```
+
+
+### 完整流程图
+
+```
+[用户态] 触发异常
+    ↓ (CPU 硬件)
+[汇编] smode_trap_vector / mtrapvec
+    ↓ 保存上下文、切换栈/页表
+[C代码] smode_trap_handler / handle_mtrap
+    ↓ 分发到具体处理函数
+[C代码] handle_syscall / handle_user_page_fault / handle_timer 等
+    ↓ 执行实际处理逻辑
+[C代码] switch_to(current)
+    ↓ 设置返回状态
+[汇编] return_to_user
+    ↓ 恢复寄存器、切换页表
+[CPU] sret / mret
+    ↓ 硬件恢复特权级和 PC
+[用户态] 继续执行
+```
+
+### 关键点
+
+| 阶段 | 执行者 | 职责 |
+|------|--------|------|
+| 异常触发 | **CPU 硬件** | 保存现场（sepc/scause/stval），跳转入口 |
+| 入口处理 | **Kernel 汇编** | 保存寄存器，切换栈/页表 |
+| 分发+处理 | **Kernel C 代码** | 判断异常类型，执行具体逻辑 |
+| 返回准备 | **Kernel 汇编** | 恢复寄存器，写 satp |
+| 返回执行 | **CPU 硬件** | 恢复 PC 和特权级（sret） |
+
+**简而言之**：CPU 负责"硬件动作"（保存/恢复、跳转），Kernel 负责"软件逻辑"（判断、分配、映射）。

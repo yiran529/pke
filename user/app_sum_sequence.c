@@ -4,6 +4,7 @@
 
 #include "user_lib.h"
 #include "util/types.h"
+#include "spike_interface/spike_utils.h"
 
 //
 // compute the summation of an arithmetic sequence. for a given "n", compute
@@ -22,7 +23,7 @@ uint64 sum_sequence(uint64 n) {
 int main(void) {
   // we need a large enough "n" to trigger pagefaults in the user stack
   uint64 n = 1000;
-
+  printu("[debug] main printu 1\n");
   printu("Summation of an arithmetic sequence from 0 to %ld is: %ld \n", n, sum_sequence(1000) );
   exit(0);
 }
