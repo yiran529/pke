@@ -19,7 +19,6 @@ static void handle_syscall(trapframe *tf) {
   // tf->epc points to the address that our computer will jump to after the trap handling.
   // for a syscall, we should return to the NEXT instruction after its handling.
   // in RV64G, each instruction occupies exactly 32 bits (i.e., 4 Bytes)
-  sprint("Entering handle_syscall ...\n");
   tf->epc += 4;
 
   // TODO (lab1_1): remove the panic call below, and call do_syscall (defined in
