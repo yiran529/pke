@@ -30,6 +30,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   // sprint("Calling user_va_to_pa() to manually walk user page table...\n");
   
   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
+  sprint(pa);
   // sprint("Translated PA: 0x%lx\n", (uint64)pa);
   // sprint("Message: %s", pa);
   // sprint("===========================================\n\n");
