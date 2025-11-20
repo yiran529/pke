@@ -65,6 +65,11 @@ void switch_to(process* proc) {
   // make user page table. macro MAKE_SATP is defined in kernel/riscv.h. added @lab2_1
   uint64 user_satp = MAKE_SATP(proc->pagetable);
 
+  // sprint("\n>>> Switching to USER mode: satp will change <<<\n");
+  // sprint("Before: satp = 0x%lx (kernel page table)\n", read_csr(satp));
+  // sprint("After:  satp = 0x%lx (user page table)\n", user_satp);
+  // sprint("Result: All memory accesses auto-use user page table\n\n");
+
   // return_to_user() is defined in kernel/strap_vector.S. switch to user mode with sret.
   // note, return_to_user takes two parameters @ and after lab2_1.
   return_to_user(proc->trapframe, user_satp);
