@@ -32,7 +32,7 @@ smode_trap_vector:
 
     # come back to save a0 register before entering trap handling in trapframe
     # [t0]=[sscratch]
-    csrr t0, sscratch ## 将栈切换到用户进程“自带”的“用户内核栈“，也就是kernel/process.c文件中switch_to函数的第39行所引用的proc->kstack，而不使用PKE内核自己的栈
+    csrr t0, sscratch ## 将栈切换到用户进程“自带”的“用户内核栈“，也就是kernel/process.c文件中switch_to函数的第39行所引用的proc->kstack，而不使用mstack
     sd t0, 72(a0)
 
     # use the "user kernel" stack (whose pointer stored in p->trapframe->kernel_sp)

@@ -201,15 +201,17 @@ int do_fork( process* parent)
 
         // convert free_pages_address into a filter to skip reclaimed blocks in the heap
         // when mapping the heap blocks
-        int free_block_filter[MAX_HEAP_PAGES];
+        int free_block_filter[MAX_HEAP_PAGES]; /// 标记哪些堆页是被释放的数组
         memset(free_block_filter, 0, MAX_HEAP_PAGES);
         uint64 heap_bottom = parent->user_heap.heap_bottom;
+
+        /// 标记已释放的堆页
         for (int i = 0; i < parent->user_heap.free_pages_count; i++) {
           int index = (parent->user_heap.free_pages_address[i] - heap_bottom) / PGSIZE;
           free_block_filter[index] = 1;
         }
 
-        // copy and map the heap blocks
+        // copy and map the heap blocks /// 跳过已释放的堆页
         for (uint64 heap_block = current->user_heap.heap_bottom;
              heap_block < current->user_heap.heap_top; heap_block += PGSIZE) {
           if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
@@ -217,6 +219,11 @@ int do_fork( process* parent)
 
           void* child_pa = alloc_page();
           memcpy(child_pa, (void*)lookup_pa(parent->pagetable, heap_block), PGSIZE);
+
+          /// 以下语句的执行结果：
+          /// 虚拟地址：父、子一致（指针数值不变）
+          /// 物理页面：父、子各自独立（复制，不共享）
+          /// 已释放页：跳过不映射，保持“空洞”一致
           user_vm_map((pagetable_t)child->pagetable, heap_block, PGSIZE, (uint64)child_pa,
                       prot_to_type(PROT_WRITE | PROT_READ, 1));
         }
@@ -227,7 +234,7 @@ int do_fork( process* parent)
         memcpy((void*)&child->user_heap, (void*)&parent->user_heap, sizeof(parent->user_heap));
         break;
       }
-      case CODE_SEGMENT:
+      case CODE_SEGMENT: {
         // TODO (lab3_1): implment the mapping of child code segment to parent's
         // code segment.
         // hint: the virtual address mapping of code segment is tracked in mapped_info
@@ -237,7 +244,23 @@ int do_fork( process* parent)
         // address region of child to the physical pages that actually store the code
         // segment of parent process.
         // DO NOT COPY THE PHYSICAL PAGES, JUST MAP THEM.
-        panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
+        // panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
+        
+        // uint64 parent_va = current->mapped_info[CODE_SEGMENT].va;
+        // uint64 child_va = parent_va;
+        // void* child_pa = (void*)lookup_pa(current->pagetable, child_va);
+        // user_vm_map((pagetable_t)child->pagetable, child_va, PGSIZE, (uint64)child_pa,
+        //               prot_to_type(PROT_EXEC | PROT_READ, 1));
+
+        // 注意不同于STACK_SEGMENT或CONTEXT_SEGMENT的是，CODE_SEGMENT可能不止1 npages，所以需要便利
+        uint64 va_start = parent->mapped_info[i].va;
+        int npages = parent->mapped_info[i].npages;
+        for (int p = 0; p < npages; p++) {
+          uint64 va = va_start + p * PGSIZE;
+          void* pa = (void*)lookup_pa(parent->pagetable, va);
+          user_vm_map(child->pagetable, va, PGSIZE, (uint64)pa,
+                      prot_to_type(PROT_EXEC | PROT_READ, 1));
+        }
 
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
@@ -246,6 +269,7 @@ int do_fork( process* parent)
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
         break;
+      }
     }
   }
 
