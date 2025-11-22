@@ -1383,17 +1383,14 @@ PKE建立了一套完整的函数流程来管理进程从创建到消亡的全�
     3.  将该进程的状态设置为 `RUNNING`。
     4.  调用 `switch_to()` 将其投入运行。
     5.  如果就绪队列为空，调度器会检查是否所有进程都已结束，如果是，则关闭系统。
+
+---
+---
 # lab3_1
 ## process结构体成员
 
-ls
-
 | 成员变量 | 类型 | 含义 |
 | :--- | :--- | :--- |
---------断）时，CPU会切换到这个栈上执行内核代码。每个进程都有独立的内核栈，保证了内 |
-ls --color=auto `satp` 寄存器，从而激活该进程的虚拟地址空间。 |
-epc等）。当发生 |
->>EOF`fork` 时复制父进程内存空间的关键依据。 |
 | `total_mapped_region` | `int` | **已映射区域计数**。记录 `mapped_info` 数组中当前有多少个有效的映射区域。 |
 | `user_heap` | `process_heap_manager` | **用户堆管理器**。每个进程独立的堆管理结构，包/结束地址以及空闲页链表。实现了进程间堆空间的隔离。 |
 | `pid` | `uint64` | **进程ID**。唯一标识一个进程的整数。 |
@@ -1404,7 +1401,6 @@ epc等）。当发生 |
 ### 关键结
 
 #### 1. `mapped_region`
-ls
 ```c
 typedef struct mapped_region {
   uint64 va;       // 虚拟起始地址
@@ -1415,7 +1411,6 @@ typedef struct mapped_region {
 
 
 #### 2. `process_heap_manager`
-ls
 ```c
 typedef struct process_heap_manager {
   uint64 heap_top;    // 堆顶地址（当前堆的增长边界）
