@@ -492,7 +492,11 @@ struct vinode *rfs_create(struct vinode *parent, struct dentry *sub_dentry) {
   // nlinks, i.e., the number of links.
   // blocks, i.e., its block count.
   // Note: DO NOT DELETE CODE BELOW PANIC.
-  panic("You need to implement the code of populating a disk inode in lab4_1.\n" );
+  // panic("You need to implement the code of populating a disk inode in lab4_1.\n" );
+  free_dinode->blocks = 1;
+  free_dinode->size = 0;
+  free_dinode->nlinks = 1;
+  free_dinode->type = R_FILE;
 
   // DO NOT REMOVE ANY CODE BELOW.
   // allocate a free block for the file
@@ -503,6 +507,8 @@ struct vinode *rfs_create(struct vinode *parent, struct dentry *sub_dentry) {
   free_page(free_dinode);
 
   // ** build vfs inode according to dinode
+  /// superblock:它存储了整个文件系统的全局元数据，描述了文件系统的整体布局。
+  /// 如果没有它，操作系统就不知道这个磁盘分区有多大、哪里存 inode、哪里存数据。
   struct vinode *new_vinode = rfs_alloc_vinode(parent->sb);
   new_vinode->inum = free_inum;
   rfs_update_vinode(new_vinode);
