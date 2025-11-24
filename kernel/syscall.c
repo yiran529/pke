@@ -10,6 +10,7 @@
 #include "string.h"
 #include "process.h"
 #include "util/functions.h"
+#include "elf.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -32,7 +33,31 @@ ssize_t sys_user_exit(uint64 code) {
 }
 
 ssize_t sys_user_print_backtrace(uint32 nlayers) {
+  // 重新打开 ELF 文件
+  arg_buf arg_bug_msg;
+  size_t argc = parse_args(&arg_bug_msg);  // 需要将 parse_args 改为非 static
   
+  elf_ctx elfloader;
+  elf_info info;
+  
+  info.f = spike_file_open(arg_bug_msg.argv[0], O_RDONLY, 0);
+  info.p = current;
+  
+  if (IS_ERR_VALUE(info.f)) {
+    sprint("Failed to open ELF file\n");
+    return -1;
+  }
+  
+  if (elf_init(&elfloader, &info) != EL_OK) {
+    spike_file_close(info.f);
+    return -1;
+  }
+
+  uint64 fp = current->trapframe->regs.s0; // fp寄存器
+  uint64 ra = current->trapframe->regs.ra; 
+  sprint("ra: 0x%lx\n", ra);
+  sprint("fp: 0x%lx\n", fp);
+  get_name_by_ra(&elfloader, NULL, ra);
   return 0;
 }
 

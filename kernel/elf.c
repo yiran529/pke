@@ -8,11 +8,6 @@
 #include "riscv.h"
 #include "spike_interface/spike_utils.h"
 
-typedef struct elf_info_t {
-  spike_file_t *f;
-  process *p;
-} elf_info;
-
 //
 // the implementation of allocater. allocates memory space for later segment loading
 //
@@ -75,16 +70,13 @@ elf_status elf_load(elf_ctx *ctx) {
   return EL_OK;
 }
 
-typedef union {
-  uint64 buf[MAX_CMDLINE_ARGS];
-  char *argv[MAX_CMDLINE_ARGS];
-} arg_buf;
+
 
 //
 // returns the number (should be 1) of string(s) after PKE kernel in command line.
 // and store the string(s) in arg_bug_msg.
 //
-static size_t parse_args(arg_buf *arg_bug_msg) {
+size_t parse_args(arg_buf *arg_bug_msg) {
   // HTIFSYS_getmainvars frontend call reads command arguments to (input) *arg_bug_msg
   long r = frontend_syscall(HTIFSYS_getmainvars, (uint64)arg_bug_msg,
       sizeof(*arg_bug_msg), 0, 0, 0, 0, 0);
@@ -137,4 +129,81 @@ void load_bincode_from_host_elf(process *p) {
   spike_file_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
+
+// ============================= Below are utils for print_backtrace =============================
+void find_all_section(elf_ctx* ctx, elf_section_header* section_headers) {
+  for (int i = 0; i < ctx->ehdr.shnum; i++) {
+    elf_fpread(ctx, 
+              (void*)(section_headers + i), 
+              sizeof(elf_section_header), 
+              ctx->ehdr.shoff + i * ctx->ehdr.shentsize);
+  }
+}
+
+void find_shstrtab(elf_ctx* ctx, elf_section_header* section_headers, char* shstrtab) {
+  // .shstrtab 的索引在 ehdr.shstrndx 中
+  elf_section_header *shstrtab_hdr = &section_headers[ctx->ehdr.shstrndx];
+
+  // 读取 .shstrtab 的内容
+  elf_fpread(ctx, shstrtab, shstrtab_hdr->sh_size, shstrtab_hdr->sh_offset);
+}
+
+void find_section(elf_ctx* ctx, elf_section_header* section_headers, 
+                  char* section_name, elf_section_header* hdr) {
+
+  // 获取shstrtab的内容
+  int shstrtab_sz = section_headers[ctx->ehdr.shstrndx].sh_size;
+  char shstrtab[shstrtab_sz + 1];
+  find_shstrtab(ctx, section_headers, shstrtab);
+
+  for (int i = 0; i < ctx->ehdr.shnum; i++) {
+      // 获取节名 (通过 sh_name 在 shstrtab 中的偏移)
+      char *section_name = shstrtab + section_headers[i].sh_name;
+      
+      // 比较节名
+      if (strcmp(section_name, section_name) == 0) {
+        *hdr = section_headers[i];
+      } 
+  }
+}
+
+void get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra) {
+  find_all_section(ctx, section_headers);
+  // 读取符号表
+  elf_section_header symtab_hdr;
+  find_section(ctx, section_headers, ".symtab", &symtab_hdr);
+  int symbol_count = symtab_hdr.sh_size / sizeof(elf_symbol);
+  elf_symbol symbols[symbol_count];
+  elf_fpread(ctx, (void*)&symbols, symtab_hdr.sh_size, symtab_hdr.sh_offset);
+
+  // 读取字符串表
+  elf_section_header strtab_hdr;
+  find_section(ctx, section_headers, ".symtab", &strtab_hdr);
+  char strtab[strtab_hdr.sh_size + 1];
+  elf_fpread(ctx, (void*)strtab, strtab_hdr.sh_size, strtab_hdr.sh_offset);
+  
+  char *function_name = NULL;
+
+  for (int i = 0; i < symbol_count; i++) {
+    elf_symbol *sym = &symbols[i];
+    
+    // 检查符号类型 (st_info的低4位)
+    uint8 symbol_type = sym->st_info & 0x0F;
+    
+    // STT_FUNC = 2 (函数符号)
+    if (symbol_type != 2) continue;
+    
+    // 检查 ra 是否在函数的地址范围内
+    // ra 可能是函数中间的地址，或者是调用后的返回地址
+    if (ra >= sym->st_value && ra < sym->st_value + sym->st_size) {
+      // 找到了！获取函数名
+      function_name = strtab + sym->st_name;
+      break;
+    }
+  }
+
+  if (function_name) {
+    sprint("%s\n", function_name);
+  }
 }
