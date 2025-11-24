@@ -681,3 +681,115 @@ void handle_mtimer_trap() {
   // clear the software interrupt pending bit in sip
   write_csr(sip, read_csr(sip) & ~SIP_SSIP);
 }
+```
+
+# lab1_challenge1
+## Lab1_Challenge1 需要用到的基础知识
+
+### 1. **RISC-V 函数调用约定与栈帧结构**
+- **寄存器使用规范**：
+  - `ra` (x1)：返回地址寄存器，存储函数调用的返回地址
+  - `sp` (x2)：栈指针，指向当前栈顶
+  - `fp/s0` (x8)：帧指针，指向当前栈帧的基址（需编译器选项 `-fno-omit-frame-pointer` 保留）
+  - `a0-a7`：函数参数寄存器
+
+- **栈帧布局**（从高地址到低地址）：
+  ```
+  +-------------------+  <- 前一个栈帧的 fp
+  | 返回地址 (ra)     |
+  +-------------------+
+  | 前一个 fp         |  <- 当前 fp 指向这里
+  +-------------------+
+  | 局部变量          |
+  +-------------------+  <- 当前 sp
+  ```
+
+- **关键点**：
+  - 函数调用时，`ra` 会被保存到栈中
+  - 叶子函数可能不保存 `ra`（没有进一步调用）
+  - 通过 `fp` 可以回溯整个调用链
+
+### 2. **用户态与内核态的栈切换**
+- **用户栈 vs 内核栈**：
+  - 用户程序执行时使用用户栈（位于用户地址空间）
+  - 系统调用/异常时切换到"用户内核栈"（`proc->kstack`）
+  - **关键**：`print_backtrace` 需要访问**用户栈**，而非当前的内核栈
+
+- **如何获取用户栈指针**：
+  - 进入内核时，用户态寄存器保存在 `trapframe` 中
+  - 用户栈指针：`current->trapframe->regs.sp`
+  - 用户帧指针：`current->trapframe->regs.s0`（如果编译器保留）
+
+### 3. **ELF 文件符号表知识**
+- **符号表节 (`.symtab`)**：
+  - 存储所有函数/变量的符号信息
+  - 每个符号包含：名称索引、地址、大小、类型等
+  - 结构体定义（需查阅 ELF 规范）：
+    ```c
+    typedef struct {
+        uint32 st_name;    // 符号名在字符串表中的偏移
+        uint8  st_info;    // 符号类型和绑定属性
+        uint8  st_other;   // 保留
+        uint16 st_shndx;   // 相关段索引
+        uint64 st_value;   // 符号地址
+        uint64 st_size;    // 符号大小
+    } Elf64_Sym;
+    ```
+
+- **字符串表节 (`.strtab`)**：
+  - 存储所有符号名的实际字符串
+  - 以 `\0` 分隔的连续字符串数组
+  - 通过 `st_name` 偏移量索引
+
+- **地址到符号的映射**：
+  1. 遍历 `.symtab` 中的所有符号
+  2. 对于函数符号（`STT_FUNC`），检查地址是否在 `[st_value, st_value + st_size)` 范围内
+  3. 找到匹配的符号后，通过 `st_name` 从 `.strtab` 中读取函数名
+
+### 4. **ELF 文件的节（Section）解析**
+- **节头表（Section Header Table）**：
+  - 位置：`ehdr.shoff`（在 ELF 头中）
+  - 每个节头大小：`ehdr.shentsize`
+  - 节头数量：`ehdr.shnum`
+  - 节名字符串表索引：`ehdr.shstrndx`
+
+- **查找特定节的步骤**：
+  1. 读取节头字符串表（索引 = `ehdr.shstrndx`）
+  2. 遍历所有节头，对比节名（通过 `sh_name` 偏移）
+  3. 找到 `.symtab` 和 `.strtab` 后，读取其内容
+
+### 5. **系统调用机制**
+- **系统调用号分配**：需要在 syscall.h 中定义 `SYS_user_print_backtrace`
+- **参数传递**：`a0` 存系统调用号，`a1-a7` 存参数（这里是回溯层数）
+- **返回值**：通过 `trapframe->regs.a0` 返回给用户程序
+
+### 6. **实现思路总结**
+```
+用户调用 print_backtrace(7)
+    ↓
+ecall 触发系统调用
+    ↓
+内核从 trapframe 获取用户 fp/sp
+    ↓
+遍历用户栈帧链（通过 fp 追踪）
+    ↓
+每个栈帧读取返回地址 ra
+    ↓
+在 .symtab 中查找 ra 对应的函数符号
+    ↓
+从 .strtab 中获取函数名并打印
+    ↓
+重复 N 层（参数指定）或到达 main
+```
+
+### 7. **关键工具函数**
+- `elf_fpread(ctx, dest, size, offset)`：从 ELF 文件读取数据
+- `memcpy/strcmp`：内存/字符串操作
+- `read_csr(scause/sepc)`：读取异常/中断信息
+- `*(uint64 *)(fp + offset)`：解引用栈指针读取数据
+
+### 8. **注意事项**
+- **编译选项**：必须使用 `-fno-omit-frame-pointer`（Makefile 已设置）
+- **叶子函数**：可能不保存 `ra`，需特殊处理
+- **定长栈帧假设**：如果 fp 追踪困难，可假设栈帧固定大小（通过反汇编观察）
+- **边界条件**：回溯到 `main` 或超出层数时停止
