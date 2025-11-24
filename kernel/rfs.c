@@ -444,6 +444,7 @@ struct vinode *rfs_lookup(struct vinode *parent, struct dentry *sub_dentry) {
   // browse the dir entries contained in a directory file
   for (int i = 0; i < total_direntrys; ++i) {
     if (i % one_block_direntrys == 0) {  // read in the disk block at boundary
+      /// rfs_direntry放在磁盘中
       rfs_r1block(rdev, parent->addrs[i / one_block_direntrys]);
       p_direntry = (struct rfs_direntry *)rdev->iobuffer;
     }
@@ -652,7 +653,9 @@ int rfs_readdir(struct vinode *dir_vinode, struct dir *dir, int *offset) {
   // the method of returning is to popular proper members of "dir", more specifically,
   // dir->name and dir->inum.
   // note: DO NOT DELETE CODE BELOW PANIC.
-  panic("You need to implement the code for reading a directory entry of rfs in lab4_2.\n" );
+  // panic("You need to implement the code for reading a directory entry of rfs in lab4_2.\n" );
+  memcpy(dir->name, p_direntry->name, RFS_MAX_FILE_NAME_LEN);
+  dir->inum = p_direntry->inum;
 
   // DO NOT DELETE CODE BELOW.
   (*offset)++;
