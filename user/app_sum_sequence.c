@@ -5,6 +5,7 @@
 
 #include "user_lib.h"
 #include "util/types.h"
+#include "spike_interface/spike_utils.h"
 
 //
 // compute the summation of an arithmetic sequence. for a given "n", compute
