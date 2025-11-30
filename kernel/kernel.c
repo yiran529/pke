@@ -54,6 +54,7 @@ void load_user_program(process *proc) {
 
   sprint("user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", proc->trapframe,
          proc->trapframe->regs.sp, proc->kstack);
+  proc->user_st_top = USER_STACK_TOP;
 
   // load_bincode_from_host_elf() is defined in kernel/elf.c
   load_bincode_from_host_elf(proc);
