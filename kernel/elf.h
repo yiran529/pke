@@ -95,5 +95,5 @@ typedef struct {
   uint64 st_size;   // 符号的大小 (函数大小) ← 重要
 } elf_symbol;
 
-void get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra);
+int get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra);
 #endif

@@ -150,9 +150,10 @@ void find_shstrtab(elf_ctx* ctx, elf_section_header* section_headers, char* shst
 }
 
 void find_section(elf_ctx* ctx, elf_section_header* section_headers, 
-                  char* section_name, elf_section_header* hdr) {
+                  char* tg_section_name, elf_section_header* hdr) {
 
   // 获取shstrtab的内容
+  // sprint("[DEBUG] Entered find_section to find %s\n", tg_section_name);
   int shstrtab_sz = section_headers[ctx->ehdr.shstrndx].sh_size;
   char shstrtab[shstrtab_sz + 1];
   find_shstrtab(ctx, section_headers, shstrtab);
@@ -162,14 +163,17 @@ void find_section(elf_ctx* ctx, elf_section_header* section_headers,
       char *section_name = shstrtab + section_headers[i].sh_name;
       
       // 比较节名
-      if (strcmp(section_name, section_name) == 0) {
+      if (strcmp(section_name, tg_section_name) == 0) {
         *hdr = section_headers[i];
+        // sprint("[DEBUG] found tg_sction_name: %s\n", tg_section_name);
+        return;
       } 
   }
 }
 
-void get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra) {
+int get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra) {
   find_all_section(ctx, section_headers);
+
   // 读取符号表
   elf_section_header symtab_hdr;
   find_section(ctx, section_headers, ".symtab", &symtab_hdr);
@@ -179,7 +183,7 @@ void get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra
 
   // 读取字符串表
   elf_section_header strtab_hdr;
-  find_section(ctx, section_headers, ".symtab", &strtab_hdr);
+  find_section(ctx, section_headers, ".strtab", &strtab_hdr);
   char strtab[strtab_hdr.sh_size + 1];
   elf_fpread(ctx, (void*)strtab, strtab_hdr.sh_size, strtab_hdr.sh_offset);
   
@@ -198,12 +202,13 @@ void get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra
     // ra 可能是函数中间的地址，或者是调用后的返回地址
     if (ra >= sym->st_value && ra < sym->st_value + sym->st_size) {
       // 找到了！获取函数名
+      // sprint("[DEBUG] matched ra: 0x%lx with st_value: 0x%lx, st_size: 0x%lx\n", 
+      //         ra, sym->st_value, sym->st_size);
       function_name = strtab + sym->st_name;
-      break;
+      // sprint("[DEBUG] found function_name: %s\n",function_name);
+      sprint("%s\n", function_name);
+      return 1;
     }
   }
-
-  if (function_name) {
-    sprint("%s\n", function_name);
-  }
+  return 0;
 }

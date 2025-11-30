@@ -36,7 +36,7 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
   // 重新打开 ELF 文件
   arg_buf arg_bug_msg;
   size_t argc = parse_args(&arg_bug_msg);  // 需要将 parse_args 改为非 static
-  
+
   elf_ctx elfloader;
   elf_info info;
   
@@ -55,9 +55,35 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
 
   uint64 fp = current->trapframe->regs.s0; // fp寄存器
   uint64 ra = current->trapframe->regs.ra; 
-  sprint("ra: 0x%lx\n", ra);
-  sprint("fp: 0x%lx\n", fp);
-  get_name_by_ra(&elfloader, NULL, ra);
+  elf_section_header section_headers[20]; //理论上限远不止20，这里为了方便而进行简化
+ 
+  // sprint("[DEBUG] ra: 0x%lx\n", ra);
+  // sprint("[DEBUG] fp: 0x%lx\n", fp);
+  // sprint("[DEBUG] (fp-8) - 0 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)-0), *((uint64*)(fp - 8)-0));
+  // sprint("[DEBUG] (fp-8) + 1 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+1), *((uint64*)(fp - 8)+1));
+  // sprint("[DEBUG] (fp-8) + 2 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+2), *((uint64*)(fp - 8)+2));
+  // sprint("[DEBUG] (fp-8) + 3 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+3), *((uint64*)(fp - 8)+3));
+  // sprint("[DEBUG] (fp-8) + 4 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+4), *((uint64*)(fp - 8)+4));
+  // sprint("[DEBUG] (fp-8) + 5 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+5), *((uint64*)(fp - 8)+5));
+  // sprint("[DEBUG] (fp-8) + 6 addr: 0x%lx, val: 0x%lx\n", (uint64)((uint64*)(fp - 8)+6), *((uint64*)(fp - 8)+6));
+
+  // 不需要打印出print_backtrace本身的信息
+  uint64* st_ptr = (uint64*)(*(uint64*)(fp - 8));
+  uint64 prev_fp = (uint64)(st_ptr - 1);
+  uint64 prev_ra = *(st_ptr - 1);
+  fp = prev_fp;
+  ra = prev_ra;
+
+  while(get_name_by_ra(&elfloader, section_headers, ra)) {
+     uint64* st_ptr = (uint64*)(*(uint64*)(fp - 8));
+     uint64 prev_fp = (uint64)(st_ptr - 1);
+     uint64 prev_ra = *(st_ptr - 1);
+     fp = prev_fp;
+     ra = prev_ra;
+    //  sprint("[DEBUG] st_ptr addr: 0x%lx, prev_ra: 0x%lx, prev_fp: 0x%lx\n", (uint64)st_ptr, ra, fp);
+     nlayers--;
+     if (nlayers == 0) break;
+  }
   return 0;
 }
 
