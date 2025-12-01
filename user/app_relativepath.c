@@ -4,7 +4,6 @@
 
 void pwd() {
   char path[30];
-  printu("[DEBUG] path addr: %p\n", path);
   read_cwd(path);
   printu("cwd:%s\n", path);
 }
@@ -28,41 +27,41 @@ int main(int argc, char *argv[]) {
   printu("change current directory to ./RAMDISK0\n");
   pwd();
 
-  // printu("\n======== Test 2: write/read file by relative path  ========\n");
-  // printu("write: ./ramfile\n");
+  printu("\n======== Test 2: write/read file by relative path  ========\n");
+  printu("write: ./ramfile\n");
 
-  // fd = open("./ramfile", O_RDWR | O_CREAT);
-  // printu("file descriptor fd: %d\n", fd);
+  fd = open("./ramfile", O_RDWR | O_CREAT);
+  printu("file descriptor fd: %d\n", fd);
 
-  // write_u(fd, str, strlen(str));
-  // printu("write content: \n%s\n", str);
-  // close(fd);
+  write_u(fd, str, strlen(str));
+  printu("write content: \n%s\n", str);
+  close(fd);
 
-  // fd = open("./ramfile", O_RDWR);
-  // printu("read: ./ramfile\n");
+  fd = open("./ramfile", O_RDWR);
+  printu("read: ./ramfile\n");
 
-  // read_u(fd, buf, MAXBUF);
-  // printu("read content: \n%s\n", buf);
-  // close(fd);
+  read_u(fd, buf, MAXBUF);
+  printu("read content: \n%s\n", buf);
+  close(fd);
 
-  // printu("\n======== Test 3: Go to parent directory  ========\n");
+  printu("\n======== Test 3: Go to parent directory  ========\n");
 
-  // pwd();
-  // cd("..");
-  // printu("change current directory to ..\n");
-  // pwd();
+  pwd();
+  cd("..");
+  printu("change current directory to ..\n");
+  pwd();
   
-  // printu("read: ./hostfile.txt\n");
+  printu("read: ./hostfile.txt\n");
 
-  // fd = open("./hostfile.txt", O_RDONLY);
-  // printu("file descriptor fd: %d\n", fd);
+  fd = open("./hostfile.txt", O_RDONLY);
+  printu("file descriptor fd: %d\n", fd);
 
-  // read_u(fd, buf, MAXBUF);
-  // printu("read content: \n%s\n", buf);
+  read_u(fd, buf, MAXBUF);
+  printu("read content: \n%s\n", buf);
 
-  // close(fd);
+  close(fd);
 
-  // printu("\nAll tests passed!\n\n");
+  printu("\nAll tests passed!\n\n");
   exit(0);
   return 0;
 }

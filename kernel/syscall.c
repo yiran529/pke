@@ -25,18 +25,8 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   // so we have to transfer it into phisical address (kernel is running in direct mapping).
   assert( current );
   
-  // sprint("\n=== KERNEL MODE: Manual Translation Required ===\n");
-  // sprint("buf (user VA): 0x%lx\n", (uint64)buf);
-  // sprint("Current satp:  0x%lx (points to KERNEL page table)\n", read_csr(satp));
-  // sprint("User pagetable: 0x%lx\n", (uint64)current->pagetable);
-  // sprint("Why manual? satp != user_pagetable, so MMU can't auto-translate buf!\n");
-  // sprint("Calling user_va_to_pa() to manually walk user page table...\n");
-  
   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
   sprint(pa);
-  // sprint("Translated PA: 0x%lx\n", (uint64)pa);
-  // sprint("Message: %s", pa);
-  // sprint("===========================================\n\n");
   return 0;
 }
 
@@ -113,7 +103,7 @@ ssize_t sys_user_yield() {
 //
 ssize_t sys_user_open(char *pathva, int flags) {
   char* pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_open(pathpa, flags);
+  return do_open(pathpa, flags, current->pfiles->cwd);
 }
 
 //
@@ -183,7 +173,7 @@ ssize_t sys_user_close(int fd) {
 //
 ssize_t sys_user_opendir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_opendir(pathpa);
+  return do_opendir(pathpa, current->pfiles->cwd);
 }
 
 //
