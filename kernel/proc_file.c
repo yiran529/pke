@@ -14,7 +14,71 @@
 #include "spike_interface/spike_utils.h"
 #include "util/functions.h"
 #include "util/string.h"
+#include "vmm.h"
 
+// ***************** helpers for path resolution *****************
+
+// 处理路径中可能含有的.或者..的核心逻辑
+int normalize_path(char* path) {
+  char tokens[MAX_PATH_DEPTH][MAX_DENTRY_NAME_LEN];
+  int tokens_count = 0;
+
+  // collect dentry names
+  char* token = strtok(path, "/");
+  while(token != NULL) {
+    if(strcmp(token, ".") == 0) {
+      // skip through this situation
+    } else if(strcmp(token, "..")) {
+      if(tokens_count > 0) {
+        tokens_count--;
+      } // else do nothing
+    } else if(token[0] == '\0') {
+      // skip throught this situation
+      // 处理“//”这样的情况，虽然这种路径是错的，但这里暂时不实现异常处理
+    } else {
+      strcpy(tokens[tokens_count++], token);
+    }
+    token = strtok(NULL, "/");
+  }
+
+  // reconstruct the path
+  path[0] = '\0';
+  strcat(path, "/");
+  for (int i = 0; i < tokens_count; i++) {
+      strcat(path, tokens[i]);
+      if (i < tokens_count - 1) {
+          strcat(path, "/");
+      }
+  }
+
+  // boundaries? maybe
+  
+  return 0;
+}
+
+int resolve_path(char* path, char* res_path, struct dentry* cwd) {
+  if(path[0] == '/') {
+    // absolute path
+    strcpy(res_path, path);
+    return normalize_path(res_path);
+  } else {
+    // relative path
+    strcpy(res_path, cwd->name);
+    int len = strlen(res_path);
+    if (res_path[len - 1] != '/') {
+      res_path[len] = '/';
+      res_path[len + 1] = '\0';
+    }
+    strcat(res_path, path);
+
+    return normalize_path(res_path);
+  }
+  return 0;
+}
+
+
+
+// **************** main proc_file functions *****************
 //
 // initialize file system
 //
@@ -220,4 +284,24 @@ int do_link(char *oldpath, char *newpath) {
 //
 int do_unlink(char *path) {
   return vfs_unlink(path);
+}
+
+int do_rcwd(char* path){
+  memcpy(path, current->pfiles->cwd->name, MAX_DENTRY_NAME_LEN);
+  return 0;
+}
+
+int do_ccwd(char * path, struct dentry** cwd){
+  sprint("[DEBUG] do_ccwd: changing cwd to %s\n", path);
+  resolve_path(path, path, *cwd);
+  sprint("[DEBUG] do_ccwd: resolved path: %s\n", path);
+  struct dentry* start = vfs_root_dentry;
+  char miss[MAX_PATH_LEN];
+  struct dentry* d = lookup_final_dentry(path, &start, miss);
+  if(!d || d->dentry_inode->type != DIR_I) {
+    sprint("do_ccwd: cannot change cwd to a non-exist directory!\n");
+    return -1;
+  }
+  *cwd = d;
+  return 0;
 }
