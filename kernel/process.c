@@ -252,7 +252,7 @@ int do_fork( process* parent)
         // user_vm_map((pagetable_t)child->pagetable, child_va, PGSIZE, (uint64)child_pa,
         //               prot_to_type(PROT_EXEC | PROT_READ, 1));
 
-        // 注意不同于STACK_SEGMENT或CONTEXT_SEGMENT的是，CODE_SEGMENT可能不止1 npages，所以需要便利
+        // 注意不同于STACK_SEGMENT或CONTEXT_SEGMENT的是，CODE_SEGMENT可能不止1 npages，所以需要遍历
         uint64 va_start = parent->mapped_info[i].va;
         int npages = parent->mapped_info[i].npages;
         for (int p = 0; p < npages; p++) {
@@ -270,6 +270,24 @@ int do_fork( process* parent)
         child->total_mapped_region++;
         break;
       }
+      case DATA_SEGMENT: {
+        uint64 va_start = parent->mapped_info[i].va;
+        int npages = parent->mapped_info[i].npages;
+        for (int p = 0; p < npages; p++) {
+          uint64 va = va_start + p * PGSIZE;
+          void* child_pa = alloc_page();
+          memcpy(child_pa, (void*)lookup_pa(parent->pagetable, va), PGSIZE);
+          user_vm_map(child->pagetable, va, PGSIZE, (uint64)child_pa,
+                      prot_to_type(PROT_WRITE | PROT_READ, 1));
+        }
+
+        child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
+        child->mapped_info[child->total_mapped_region].npages =
+          parent->mapped_info[i].npages;
+        child->mapped_info[child->total_mapped_region].seg_type = DATA_SEGMENT;
+        child->total_mapped_region++;
+        break;
+      }
     }
   }
 
@@ -279,4 +297,64 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+
+int do_wait(int pid) {
+  // sprint("[DEBUG] Entered do_wait\n");
+  // pid不合法
+  if(pid < -1 || pid == 0) return -1;
+
+  // 等待特定pid的进程
+  if(pid > 0) {
+    for(int i = 0; i < NPROC; i++) {
+      process* p = &procs[i];
+
+      if(!p->parent) continue;
+      if(p->parent->pid != current->pid && p->pid == pid) {
+        return -1;
+      }
+      if(p->parent->pid == current->pid && p->pid == pid) {
+        if (p->status != ZOMBIE) {
+          current->status = BLOCKED;
+          schedule();
+        }
+        assert(p->status == ZOMBIE);
+        // user_vm_unmap(p.pagetable, ) ???
+        // current->status = BLOCKED; ???
+        // p->status = FREE;
+        return p->pid;
+      }
+    }
+  }
+
+  // 等待任意一个子进程
+  if(pid == -1) {
+    // sprint("[DEBUG] loop to find a ZOMBIE children process\n");
+    int has_children = 0;
+
+    while(1) {
+      for(int i = 0; i < NPROC; i++) {
+        // sprint("[DEBUG] Check if procs[%d] satisfies\n", i);
+        process *p = &procs[i];
+        if(!p->parent) continue;
+        if(p->parent->pid == current->pid) {
+          has_children = 1;
+        }
+        if(p->parent->pid == current->pid && p->status == ZOMBIE) {
+          // user_vm_unmap(p.pagetable, ) ???
+          // current->status = BLOCKED; ???
+          // p->status = FREE;
+          return p->pid;
+        }
+      }
+      current->status=BLOCKED;
+      schedule();
+    }
+
+    if(!has_children) {
+      return -1;
+    }
+  }
+
+  return -1;
 }

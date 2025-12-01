@@ -12,17 +12,21 @@ int flag;
 int main(void) {
     flag = 0;
     int pid = fork();
+    // printu("[DEBUG] forked\n");
     if (pid == 0) {
+        // printu("[DEBUG] in children process\n");
         flag = 1;
         pid = fork();
         if (pid == 0) {
+            // printu("[DEBUG] in grandchild process\n");
             flag = 2;
             printu("Grandchild process end, flag = %d.\n", flag);
         } else {
             wait(pid);
-            printu("Child process end, flag = %d.\n", flag);
+            // printu("Child process end, flag = %d.\n", flag);
         }
     } else {
+        // printu("[DEBUG] in parent process\n");
         wait(-1);
         printu("Parent process end, flag = %d.\n", flag);
     }
