@@ -80,6 +80,7 @@ typedef enum elf_status_t {
 typedef struct elf_ctx_t {
   void *info;
   elf_header ehdr;
+  uint64 image_end;  // highest virtual address consumed inside the user image (for loader scratch)
 } elf_ctx;
 
 elf_status elf_init(elf_ctx *ctx, void *info);

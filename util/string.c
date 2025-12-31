@@ -62,6 +62,14 @@ char* strcpy(char* dest, const char* src) {
   return dest;
 }
 
+char* strcat(char* dest, const char* src) {
+  char* d = dest;
+  while (*d) d++;
+  while ((*d++ = *src++))
+    ;
+  return dest;
+}
+
 long atol(const char* str) {
   long res = 0;
   int sign = 0;

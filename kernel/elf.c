@@ -8,6 +8,17 @@
 #include "riscv.h"
 #include "spike_interface/spike_utils.h"
 
+// round up value to the next multiple of align (align must be power-of-two)
+#define ALIGN_UP(val, align) (((val) + ((align) - 1)) & ~((align) - 1))
+// hard cap for directory/file entries we cache from DWARF line table
+#define DEBUG_DIR_CAP 64
+#define DEBUG_FILE_CAP 64
+
+// reserve_loader_space bumps ctx->image_end and returns a zeroed chunk within user image
+static void *reserve_loader_space(elf_ctx *ctx, uint64 bytes);
+// load_debug_line_section locates .debug_line and builds dir/file/line tables
+static void load_debug_line_section(elf_ctx *ctx);
+
 typedef struct elf_info_t {
   spike_file_t *f;
   process *p;
@@ -32,11 +43,31 @@ static uint64 elf_fpread(elf_ctx *ctx, void *dest, uint64 nb, uint64 offset) {
   return spike_file_pread(msg->f, dest, nb, offset);
 }
 
+// carve out loader-side scratch memory inside the user image so later DWARF tables
+// live in user space (ctx->image_end keeps track of the highest used VA)
+static void *reserve_loader_space(elf_ctx *ctx, uint64 bytes) {
+    ctx->image_end = ALIGN_UP(ctx->image_end, 8);
+    void *base = (void *)ctx->image_end;
+    ctx->image_end = ALIGN_UP(ctx->image_end + bytes, 8);
+    return base;
+}
+
+// compute how much trailing space we need for dir/file/line arrays behind raw .debug_line
+static uint64 calc_debug_aux_size(uint64 debug_len) {
+    uint64 dir_bytes = DEBUG_DIR_CAP * sizeof(char *);
+    uint64 file_bytes = DEBUG_FILE_CAP * sizeof(code_file);
+    uint64 line_bytes = debug_len * sizeof(addr_line);
+    return ALIGN_UP(dir_bytes + file_bytes + line_bytes, 8);
+}
+
+
+
 //
 // init elf_ctx, a data structure that loads the elf.
 //
 elf_status elf_init(elf_ctx *ctx, void *info) {
   ctx->info = info;
+  ctx->image_end = 0;  // highest VA consumed inside user image (used for loader scratch space)
 
   // load the elf header
   if (elf_fpread(ctx, &ctx->ehdr, sizeof(ctx->ehdr), 0) != sizeof(ctx->ehdr)) return EL_EIO;
@@ -106,12 +137,13 @@ void read_uint16(uint16 *out, char **off) {
 void make_addr_line(elf_ctx *ctx, char *debug_line, uint64 length) {
    process *p = ((elf_info *)ctx->info)->p;
     p->debugline = debug_line;
-    // directory name char pointer array
-    p->dir = (char **)((((uint64)debug_line + length + 7) >> 3) << 3); int dir_ind = 0, dir_base;
-    // file name char pointer array
-    p->file = (code_file *)(p->dir + 64); int file_ind = 0, file_base;
-    // table array
-    p->line = (addr_line *)(p->file + 64); p->line_ind = 0;
+    uint64 meta_base = ALIGN_UP((uint64)debug_line + length, 8);
+    // directory name char pointer array (limited to DEBUG_DIR_CAP entries)
+    p->dir = (char **)meta_base; int dir_ind = 0, dir_base;
+    // file name char pointer array (each entry carries back-pointer dir index)
+    p->file = (code_file *)(p->dir + DEBUG_DIR_CAP); int file_ind = 0, file_base;
+    // table array storing pc->(line,file) mapping generated from DWARF opcodes
+    p->line = (addr_line *)(p->file + DEBUG_FILE_CAP); p->line_ind = 0;
     char *off = debug_line;
     while (off < debug_line + length) { // iterate each compilation unit(CU)
         debug_header *dh = (debug_header *)off; off += sizeof(debug_header);
@@ -194,6 +226,42 @@ endop:;
     //     sprint("%p %d %d\n", p->line[i].addr, p->line[i].line, p->line[i].file);
 }
 
+// parse section headers, copy .debug_line into user image tail, and build lookup tables
+static void load_debug_line_section(elf_ctx *ctx) {
+    if (ctx->ehdr.shoff == 0 || ctx->ehdr.shnum == 0) return;
+    if (ctx->ehdr.shstrndx == 0 || ctx->ehdr.shstrndx >= ctx->ehdr.shnum) return;
+
+    // 读取节头字符串表表头
+    elf_sect_header shstr;
+    uint64 shstr_off = ctx->ehdr.shoff + (uint64)ctx->ehdr.shstrndx * ctx->ehdr.shentsize;
+    if (elf_fpread(ctx, &shstr, sizeof(shstr), shstr_off) != sizeof(shstr)) return;
+    if (shstr.size == 0) return;
+
+    // 读取节头字符串表内容
+    char *shstrtab = (char *)reserve_loader_space(ctx, shstr.size);
+    if (elf_fpread(ctx, shstrtab, shstr.size, shstr.offset) != shstr.size) return;
+
+    // 遍历所有节头，寻找.debug_line节
+    for (uint16 i = 0; i < ctx->ehdr.shnum; ++i) {
+        elf_sect_header shdr;
+        uint64 off = ctx->ehdr.shoff + (uint64)i * ctx->ehdr.shentsize;
+        if (elf_fpread(ctx, &shdr, sizeof(shdr), off) != sizeof(shdr)) return;
+        if (shdr.name >= shstr.size) continue;
+
+        const char *name = shstrtab + shdr.name;
+        if (strcmp(name, ".debug_line") != 0) continue;
+
+        uint64 prefix = ALIGN_UP(shdr.size, 8);
+        uint64 aux = calc_debug_aux_size(shdr.size);
+        uint64 total = prefix + aux;
+        char *debug_buf = (char *)reserve_loader_space(ctx, total);
+        memset(debug_buf, 0, total);
+        if (elf_fpread(ctx, debug_buf, shdr.size, shdr.offset) != shdr.size) return;
+        make_addr_line(ctx, debug_buf, shdr.size);
+        return;
+    }
+}
+
 //
 // load the elf segments to memory regions as we are in Bare mode in lab1
 //
@@ -201,6 +269,7 @@ elf_status elf_load(elf_ctx *ctx) {
   // elf_prog_header structure is defined in kernel/elf.h
   elf_prog_header ph_addr;
   int i, off;
+    uint64 max_end = ctx->image_end;  // track furthest byte touched to seed loader allocator
 
   // traverse the elf program segment headers
   for (i = 0, off = ctx->ehdr.phoff; i < ctx->ehdr.phnum; i++, off += sizeof(ph_addr)) {
@@ -217,7 +286,12 @@ elf_status elf_load(elf_ctx *ctx) {
     // actual loading
     if (elf_fpread(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
       return EL_EIO;
+
+        uint64 seg_end = ph_addr.vaddr + ph_addr.memsz;
+        if (seg_end > max_end) max_end = seg_end;
   }
+
+    ctx->image_end = ALIGN_UP(max_end, 8);
 
   return EL_OK;
 }
@@ -277,30 +351,8 @@ void load_bincode_from_host_elf(process *p) {
   // load elf. elf_load() is defined above.
   if (elf_load(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
 
-  // lab1_challenge2 add
-  int shoff = elfloader.ehdr.shoff,
-      shnum = elfloader.ehdr.shnum,
-      shentsize = elfloader.ehdr.shentsize;
-  // find .debug_line section
-  // 先找符号表表头
-  elf_sect_header shstr;
-  elf_fpread(&elfloader, &shstr, shentsize, shoff + elfloader.ehdr.shstrndx * shentsize);
-  // 读符号表
-  char* shstrtab = (char *)kmalloc(shstr.size); // 有问题！没有实现kmalloc!
-  elf_fpread(&elfloader, shstrtab, shstr.size, shstr.offset);
-  // 遍历符号表，找.debug_line节
-  for(int i = 0; i < shnum; i++) {
-    elf_sect_header shdr;
-    elf_fpread(&elfloader, &shdr, shentsize, shoff + i * shentsize);
-    char *name = shstrtab + shdr.name;
-    if (strcmp(name, ".debug_line") == 0) {
-        char *debug_line = (char *)kmalloc(shdr.size);
-        elf_fpread(&elfloader, debug_line, shdr.size, shdr.offset);
-        make_addr_line(&elfloader, debug_line, shdr.size);
-    }
-  }
-
-  elf_sect_header shdr;
+  if (elfloader.image_end != 0)
+    load_debug_line_section(&elfloader);  // populate dir/file/line tables if DWARF info exists
 
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;

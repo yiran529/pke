@@ -11,5 +11,6 @@ char* strcpy(char* dest, const char* src);
 long atol(const char* str);
 void* memmove(void* dst, const void* src, size_t n);
 char* safestrcpy(char* s, const char* t, int n);
+char* strcat(char* dest, const char* src);
 
 #endif
