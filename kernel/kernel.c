@@ -21,8 +21,8 @@ void load_user_program(process *proc) {
   proc->trapframe = (trapframe *)USER_TRAP_FRAME;
   memset(proc->trapframe, 0, sizeof(trapframe));
   // USER_KSTACK is also a physical address defined in kernel/config.h
-  proc->kstack = USER_KSTACK;
-  proc->trapframe->regs.sp = USER_STACK;
+  proc->kstack = USER_KSTACK; /// 内核栈顶地址（kstack - kernel stack)
+  proc->trapframe->regs.sp = USER_STACK; /// 用户栈顶地址（sp - stack pointer)
 
   // load_bincode_from_host_elf() is defined in kernel/elf.c
   load_bincode_from_host_elf(proc);
