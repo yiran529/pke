@@ -277,6 +277,31 @@ void load_bincode_from_host_elf(process *p) {
   // load elf. elf_load() is defined above.
   if (elf_load(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
 
+  // lab1_challenge2 add
+  int shoff = elfloader.ehdr.shoff,
+      shnum = elfloader.ehdr.shnum,
+      shentsize = elfloader.ehdr.shentsize;
+  // find .debug_line section
+  // 先找符号表表头
+  elf_sect_header shstr;
+  elf_fpread(&elfloader, &shstr, shentsize, shoff + elfloader.ehdr.shstrndx * shentsize);
+  // 读符号表
+  char* shstrtab = (char *)kmalloc(shstr.size); // 有问题！没有实现kmalloc!
+  elf_fpread(&elfloader, shstrtab, shstr.size, shstr.offset);
+  // 遍历符号表，找.debug_line节
+  for(int i = 0; i < shnum; i++) {
+    elf_sect_header shdr;
+    elf_fpread(&elfloader, &shdr, shentsize, shoff + i * shentsize);
+    char *name = shstrtab + shdr.name;
+    if (strcmp(name, ".debug_line") == 0) {
+        char *debug_line = (char *)kmalloc(shdr.size);
+        elf_fpread(&elfloader, debug_line, shdr.size, shdr.offset);
+        make_addr_line(&elfloader, debug_line, shdr.size);
+    }
+  }
+
+  elf_sect_header shdr;
+
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;
 
