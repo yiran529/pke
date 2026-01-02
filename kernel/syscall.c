@@ -107,6 +107,42 @@ ssize_t sys_user_yield() {
   return 0;
 }
 
+/* semaphore data structures and operations */
+typedef int semaphore_t;
+semaphore_t semaphores[ MAX_SEMAPHORES ];
+int first_use = 0;
+
+ssize_t sys_user_sem_new(int count) {
+   if(first_use == 0) {
+       for(int i = 0; i < MAX_SEMAPHORES; i++) {
+           semaphores[i] = -1; // -1 indicates unused semaphore
+       }
+       first_use = 1;
+   }
+  for(int i = 0; i < MAX_SEMAPHORES; i++) {
+      if(semaphores[i] == -1) {
+          semaphores[i] = count;
+          return i; // return semaphore id
+      }
+  }
+  return -1; // no available semaphore
+}
+
+// 由于是单核处理器，且这里是内核（不会被抢占），所以不需要考虑原子操作的问题
+void sys_user_sem_P(int sem) {
+    while(1) {
+        // busy wait
+        if(semaphores[sem] > 0) {
+            semaphores[sem]--;
+            break;
+        }
+    }
+}
+
+void sys_user_sem_V(int sem) {
+    semaphores[sem]++;
+}
+
 //
 // [a0]: the syscall number; [a1] ... [a7]: arguments to the syscalls.
 // returns the code of success, (e.g., 0 means success, fail for otherwise)
@@ -126,6 +162,13 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_fork();
     case SYS_user_yield:
       return sys_user_yield();
+    // added @lab3_challenge2
+    case SYS_user_sem_new:
+      return sys_user_sem_new(a1);
+    case SYS_user_sem_P:
+      return sys_user_sem_P(a1);
+    case SYS_user_sem_V:
+      return sys_user_sem_V(a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }
