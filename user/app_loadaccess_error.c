@@ -11,7 +11,7 @@
 //   // we are now in U(user)-mode, but the "csrw" instruction requires M-mode privilege.
 //   // Attempting to execute such instruction will raise illegal instruction exception.
 //   int a[10];
-//   a[1];
+//   a[100];
 //   exit(0);
 // }
 
