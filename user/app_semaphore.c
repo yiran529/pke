@@ -18,12 +18,14 @@ int main(void) {
             printu("Child%d print %d\n", pid == 0, i);
             if (pid != 0) sem_V(child_sem[1]); else sem_V(main_sem);
         }
+        // printu("[DEBUG] Child%d process get all prints done\n", pid == 0);
     } else {
         for (int i = 0; i < 10; i++) {
             sem_P(main_sem);
             printu("Parent print %d\n", i);
             sem_V(child_sem[0]);
         }
+        // printu("[DEBUG] Parent process get all prints done\n");
     }
     exit(0);
     return 0;
