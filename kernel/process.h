@@ -26,6 +26,10 @@ typedef struct process_t {
   pagetable_t pagetable;
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
+  // heap base pa 
+  uint64 heap_pa;
+  // heap base va
+  uint64 heap_va; 
 }process;
 
 // switch to run user app
@@ -36,5 +40,19 @@ extern process* current;
 
 // address of the first free page in our simple heap. added @lab2_2
 extern uint64 g_ufree_page;
+
+/* Below are macro, data structures, or functions for better_malloc or better_free */
+#define CHUNK_ALIGN 16
+#define CHUNK_HDR_SISE 16
+#define CHUNK_MIN_SIZE (CHUNK_HDR_SISE + CHUNK_ALIGN)
+#define CHUNK_IS_FREE(c) ((c)->flags == 0)
+#define ALIGN_UP(size, align) (((size) + (align)-1) & ~((align)-1))
+
+typedef struct heap_chunk {
+  uint32 size; // 含头部的总字节数
+  uint32 prev_size; // 上一块总字节数，便于 O(1) 向前合并
+  uint8 flags; // 0-free 1-used
+  char reserverd[7]; // 对齐填充
+}heap_chunk_t; // total: 16 bytes
 
 #endif

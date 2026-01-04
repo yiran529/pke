@@ -52,6 +52,16 @@ void load_user_program(process *proc) {
   // USER_STACK_TOP = 0x7ffff000, defined in kernel/memlayout.h
   proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
 
+  proc->heap_pa = (uint64)alloc_page();
+  memset((void *)proc->heap_pa, 0, PGSIZE);
+  heap_chunk_t init_chunk = {
+       .size = PGSIZE,
+       .prev_size = 0,
+       .flags = 0,
+  };
+  memcpy((void *)proc->heap_pa, &init_chunk, sizeof(heap_chunk_t));
+  proc->heap_va = USER_FREE_ADDRESS_START;
+
   sprint("user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", proc->trapframe,
          proc->trapframe->regs.sp, proc->kstack);
 
@@ -71,6 +81,9 @@ void load_user_program(process *proc) {
   // here, we assume that the size of usertrap.S is smaller than a page.
   user_vm_map((pagetable_t)proc->pagetable, (uint64)trap_sec_start, PGSIZE, (uint64)trap_sec_start,
          prot_to_type(PROT_READ | PROT_EXEC, 0));
+
+  user_vm_map((pagetable_t)proc->pagetable, (uint64)proc->heap_va, PGSIZE, (uint64)proc->heap_pa,
+         prot_to_type(PROT_WRITE | PROT_READ, 1));
 }
 
 //
