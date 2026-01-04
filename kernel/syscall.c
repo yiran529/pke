@@ -23,8 +23,19 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   // buf is now an address in user space of the given app's user stack,
   // so we have to transfer it into phisical address (kernel is running in direct mapping).
   assert( current );
+  
+  // sprint("\n=== KERNEL MODE: Manual Translation Required ===\n");
+  // sprint("buf (user VA): 0x%lx\n", (uint64)buf);
+  // sprint("Current satp:  0x%lx (points to KERNEL page table)\n", read_csr(satp));
+  // sprint("User pagetable: 0x%lx\n", (uint64)current->pagetable);
+  // sprint("Why manual? satp != user_pagetable, so MMU can't auto-translate buf!\n");
+  // sprint("Calling user_va_to_pa() to manually walk user page table...\n");
+  
   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
   sprint(pa);
+  // sprint("Translated PA: 0x%lx\n", (uint64)pa);
+  // sprint("Message: %s", pa);
+  // sprint("===========================================\n\n");
   return 0;
 }
 
@@ -89,8 +100,10 @@ ssize_t sys_user_yield() {
   // hint: the functionality of yield is to give up the processor. therefore,
   // we should set the status of currently running process to READY, insert it in
   // the rear of ready queue, and finally, schedule a READY process to run.
-  panic( "You need to implement the yield syscall in lab3_2.\n" );
-
+  // panic( "You need to implement the yield syscall in lab3_2.\n" );
+  current->status = READY;
+  insert_to_ready_queue(current);
+  schedule();
   return 0;
 }
 ssize_t sys_user_printpa(uint64 va)

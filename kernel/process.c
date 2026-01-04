@@ -65,6 +65,11 @@ void switch_to(process* proc) {
   // make user page table. macro MAKE_SATP is defined in kernel/riscv.h. added @lab2_1
   uint64 user_satp = MAKE_SATP(proc->pagetable);
 
+  // sprint("\n>>> Switching to USER mode: satp will change <<<\n");
+  // sprint("Before: satp = 0x%lx (kernel page table)\n", read_csr(satp));
+  // sprint("After:  satp = 0x%lx (user page table)\n", user_satp);
+  // sprint("Result: All memory accesses auto-use user page table\n\n");
+
   // return_to_user() is defined in kernel/strap_vector.S. switch to user mode with sret.
   // note, return_to_user takes two parameters @ and after lab2_1.
   return_to_user(proc->trapframe, user_satp);
@@ -191,7 +196,7 @@ int do_fork( process* parent)
         memcpy( (void*)lookup_pa(child->pagetable, child->mapped_info[STACK_SEGMENT].va),
           (void*)lookup_pa(parent->pagetable, parent->mapped_info[i].va), PGSIZE );
         break;
-      case HEAP_SEGMENT:
+      case HEAP_SEGMENT: {
         // build a same heap for child process.
 
         // convert free_pages_address into a filter to skip reclaimed blocks in the heap
@@ -233,7 +238,23 @@ int do_fork( process* parent)
         // address region of child to the physical pages that actually store the code
         // segment of parent process.
         // DO NOT COPY THE PHYSICAL PAGES, JUST MAP THEM.
-        panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
+        // panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
+        
+        // uint64 parent_va = current->mapped_info[CODE_SEGMENT].va;
+        // uint64 child_va = parent_va;
+        // void* child_pa = (void*)lookup_pa(current->pagetable, child_va);
+        // user_vm_map((pagetable_t)child->pagetable, child_va, PGSIZE, (uint64)child_pa,
+        //               prot_to_type(PROT_EXEC | PROT_READ, 1));
+
+        // 注意不同于STACK_SEGMENT或CONTEXT_SEGMENT的是，CODE_SEGMENT可能不止1 npages，所以需要便利
+        uint64 va_start = parent->mapped_info[i].va;
+        int npages = parent->mapped_info[i].npages;
+        for (int p = 0; p < npages; p++) {
+          uint64 va = va_start + p * PGSIZE;
+          void* pa = (void*)lookup_pa(parent->pagetable, va);
+          user_vm_map(child->pagetable, va, PGSIZE, (uint64)pa,
+                      prot_to_type(PROT_EXEC | PROT_READ, 1));
+        }
 
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
@@ -242,6 +263,7 @@ int do_fork( process* parent)
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
         break;
+      }
     }
   }
 

@@ -159,7 +159,19 @@ void *user_va_to_pa(pagetable_t page_dir, void *va) {
   // (va & (1<<PGSHIFT -1)) means computing the offset of "va" inside its page.
   // Also, it is possible that "va" is not mapped at all. in such case, we can find
   // invalid PTE, and should return NULL.
-  panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
+  // panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
+  pte_t *pte;
+  uint64 uva = (uint64)va;
+
+  if ((pte = page_walk(page_dir, uva, 0)) == 0 || (*pte & PTE_V) == 0) {
+    return NULL;
+  }
+
+  uint64 ppn = PTE2PA(*pte);
+
+  uint64 pa = ppn | ((PGSIZE - 1) & uva);
+
+  return (void*)pa;
 
 }
 
@@ -184,8 +196,31 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
   // (use free_page() defined in pmm.c) the physical pages. lastly, invalidate the PTEs.
   // as naive_free reclaims only one page at a time, you only need to consider one page
   // to make user/app_naive_malloc to behave correctly.
-  panic( "You have to implement user_vm_unmap to free pages using naive_free in lab2_2.\n" );
+  // panic( "You have to implement user_vm_unmap to free pages using naive_free in lab2_2.\n" );
+  pte_t *pte = page_walk(page_dir, va, 0);
 
+  // 检查PTE是否存在
+  if(pte==0) {
+    sprint("user_vm_unmap: no mapping for va 0x%lx\n", va);
+    return;
+  }
+
+  // 检查PTE的Valid位
+  if(( *pte & PTE_V ) == 0) {
+    sprint("user_vm_unmap: invalid mapping for va 0x%lx\n", va);
+    return;
+  }
+
+  if(free){
+    void* pa = (void*)PTE2PA(*pte);
+    // 释放物理页
+    free_page(pa);
+  }
+  
+  // 清空PTE
+  *pte = 0;
+
+  flush_tlb();
 }
 
 //
