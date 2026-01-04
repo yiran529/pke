@@ -103,12 +103,12 @@ void shutdown(int code) {
 
 void do_panic(const char* s, ...) {
   va_list vl;
-  va_start(vl, s);
+  va_start(vl, s); // macro to initialize vl to retrieve the additional arguments after s
 
   sprint(s, vl);
   shutdown(-1);
 
-  va_end(vl);
+  va_end(vl); // macro to clean up the va_list object
 }
 
 void kassert_fail(const char* s) {
