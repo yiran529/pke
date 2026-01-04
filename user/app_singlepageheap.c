@@ -22,7 +22,7 @@ int main(void) {
   if((uint64)p - (uint64)m > 512 ){
     printu("you need to manage the vm space precisely!");
     exit(-1);
-  }
+  } // else printu("malloc space ok!\n");
   better_free((void *)m);
 
   strcpy(p,str);
@@ -33,7 +33,7 @@ int main(void) {
   {
     printu("your malloc is not complete.\n");
     exit(-1);
-  }
+  } // else printu("malloc/free work well!\n");
 //  else{
 //    printu("0x%lx 0x%lx\n", m, n);
 //  }

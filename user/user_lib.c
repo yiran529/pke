@@ -11,16 +11,16 @@
 #include "kernel/syscall.h"
 
 // a wrapper for making system calls from user space to the kernel in the RISC-V environment
-int do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
+uint64 do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
                  uint64 a7) {
-  int ret;
+  uint64 ret;
 
   // before invoking the syscall, arguments of do_user_call are already loaded into the argument
   // registers (a0-a7) of our (emulated) risc-v machine.
   /// This happens automatically due to the calling convention - the compiler generates code that places these values in the appropriate registers before calling the function.
   asm volatile(
       "ecall\n" // transfer control to the kernel /// The specific syscall is determined by the value in a0
-      "sw a0, %0"  // returns a 32-bit value /// %0 refers to the output operand 'ret'
+      "sd a0, %0"  // returns a 64-bit value /// %0 refers to the output operand 'ret'
       : "=m"(ret) /// write-only output operand, and ret is the variable to receive the value from a0
       :           /// No additional input operands
       : "memory");
