@@ -11,13 +11,16 @@
 
 /* we use fixed physical (also logical) addresses for the stacks and trap frames as in
  Bare memory-mapping mode */
-// user stack top
-#define USER_STACK 0x81100000
+// Per-hart user memory layout. In bare mode the two apps share the same physical
+// address space, so we must keep their user stacks/trapframes/kernel-stacks disjoint
+// to avoid mutual overwrite. hart0 keeps原地址，hart1整体平移 0x04000000。
+//
+// This separation is required only because we do not have paging/isolation yet in
+// lab1; once paging exists, each hart/process would have its own page table.
+#define HART1_OFFSET        0x04000000
 
-// the stack used by PKE kernel when a syscall happens
-#define USER_KSTACK 0x81200000
-
-// the trap frame used to assemble the user "process"
-#define USER_TRAP_FRAME 0x81300000
+#define USER_STACK_BASE(h)     ((h) == 0 ? 0x81100000UL : 0x81100000UL + HART1_OFFSET)
+#define USER_KSTACK_BASE(h)    ((h) == 0 ? 0x81200000UL : 0x81200000UL + HART1_OFFSET)
+#define USER_TRAPFRAME_BASE(h) ((h) == 0 ? 0x81300000UL : 0x81300000UL + HART1_OFFSET)
 
 #endif

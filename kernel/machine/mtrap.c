@@ -2,13 +2,22 @@
 #include "kernel/process.h"
 #include "spike_interface/spike_utils.h"
 
-static void handle_instruction_access_fault() { panic("Instruction access fault!"); }
+static void handle_instruction_access_fault() {
+  // In multicore, report hartid and faulting PC to locate offending hart/instruction.
+  sprint("hartid = %d: Instruction access fault at mepc=%p\n", read_csr(mhartid), read_csr(mepc));
+  panic("Instruction access fault!");
+}
 
 static void handle_load_access_fault() { panic("Load access fault!"); }
 
 static void handle_store_access_fault() { panic("Store/AMO access fault!"); }
 
-static void handle_illegal_instruction() { panic("Illegal instruction!"); }
+static void handle_illegal_instruction() {
+  // Extra diagnostics: illegal instruction can be triggered if CPU lacks extension or
+  // an atomic op is executed before delegation; print hartid and faulting PC.
+  sprint("hartid = %d: Illegal instruction at mepc=%p\n", read_csr(mhartid), read_csr(mepc));
+  panic("Illegal instruction!");
+}
 
 static void handle_misaligned_load() { panic("Misaligned Load!"); }
 

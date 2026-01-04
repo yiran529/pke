@@ -19,15 +19,18 @@
 extern char smode_trap_vector[];
 extern void return_to_user(trapframe*);
 
-// current points to the currently running user-mode application.
-process* current = NULL;
+// current points to the currently running user-mode application on each hart.
+// In multicore, each hart must track its own process to restore after traps, so we use
+// an array indexed by mhartid.
+process* current[NCPU] = {0};
 
 //
 // switch to a user-mode process
 //
 void switch_to(process* proc) {
   assert(proc);
-  current = proc;
+  int hid = read_tp();
+  current[hid] = proc; // record current process for this hart only
 
   // write the smode_trap_vector (64-bit func. address) defined in kernel/strap_vector.S
   // to the stvec privilege register, such that trap handler pointed by smode_trap_vector

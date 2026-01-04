@@ -10,6 +10,7 @@
 #include "string.h"
 #include "process.h"
 #include "util/functions.h"
+#include "config.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -17,7 +18,9 @@
 // implement the SYS_user_print syscall
 //
 ssize_t sys_user_print(const char* buf, size_t n) {
-  sprint("hartid = ?: %s\n", buf);
+  int hid = read_tp();
+  // Add hartid to prints so we can distinguish which hart produced the user message.
+  sprint("hartid = %d: %s\n", hid, buf);
   return 0;
 }
 
@@ -25,11 +28,39 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 // implement the SYS_user_exit syscall
 //
 ssize_t sys_user_exit(uint64 code) {
-  sprint("hartid = ?: User exit with code:%d.\n", code);
-  // in lab1, PKE considers only one app (one process). 
-  // therefore, shutdown the system when the app calls exit()
-  sprint("hartid = ?: shutdown with code:%d.\n", code);
-  shutdown(code);
+  int hid = read_tp();
+  sprint("hartid = %d: User exit with code:%d.\n", hid, code);
+
+  // Cooperative shutdown: in multicore we must wait until all harts finish before
+  // calling shutdown, otherwise one hart would terminate others prematurely.
+  static volatile int exit_count = 0;
+
+  // atomic add: every hart that exits increments the counter. Using amoor to avoid
+  // needing a lock in this simple setting.
+  int old;
+  asm volatile("amoadd.w %0, %1, (%2)"
+               : "=r"(old)
+               : "r"(1), "r"(&exit_count)
+               : "memory");
+
+  int newval = old + 1;
+  if (hid == 0) {
+    // hart0 waits until all harts report exit, then shuts down the system.
+    while (newval < NCPU) {
+      newval = exit_count; // busy-wait; simple and sufficient for this lab
+    }
+    sprint("hartid = %d: shutdown with code:%d.\\n", hid, code);
+    shutdown(code);
+  }
+
+  // After reporting exit, disable further timer interrupts on this hart to avoid being
+  // re-entered while parked. Clear S-mode enables and pending bits (accessible in S).
+  write_csr(sie, 0);
+  write_csr(sip, 0);
+
+  // Non-zero harts just park; hart0 will eventually power off when counter reaches
+  // NCPU.
+  while (1) asm volatile("wfi");
 }
 
 //
