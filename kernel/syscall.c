@@ -52,23 +52,23 @@ ssize_t sys_user_exit(uint64 code) {
 uint64 find_first_fit(process *p, uint64 size) {
   uint64 va = p->heap_va;
   uint64 heap_limit = p->heap_va + PGSIZE; // 简单堆当前仅一页
-  while (va + CHUNK_HDR_SISE <= heap_limit) {
+  while (va + CHUNK_HDR_SIZE <= heap_limit) {
     // VA -> PA 再访问
     heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)va);
     if (!hdr) break; // 未映射，异常
-    if (CHUNK_IS_FREE(hdr) && hdr->size - CHUNK_HDR_SISE >= ALIGN_UP(size, CHUNK_ALIGN) ) { // free 且足够大
+    if (CHUNK_IS_FREE(hdr) && hdr->size - CHUNK_HDR_SIZE >= ALIGN_UP(size, CHUNK_ALIGN) ) { // free 且足够大
       hdr->flags = 1; // 标记为 used
-      if(hdr->size - ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN) < CHUNK_MIN_SIZE) {
-        size = hdr->size - CHUNK_HDR_SISE; // 不足以拆分，全部分配
-        hdr->size = ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN); // 调整大小
+      if(hdr->size - ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN) < CHUNK_MIN_SIZE) {
+        size = hdr->size - CHUNK_HDR_SIZE; // 不足以拆分，全部分配
+        hdr->size = ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN); // 调整大小
       } else {
         // 拆分
-        uint64 next_va = va + ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN);
+        uint64 next_va = va + ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN);
         heap_chunk_t *next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_va);
-        next_hdr->size = hdr->size - ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN);
-        next_hdr->prev_size = ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN);
+        next_hdr->size = hdr->size - ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN);
+        next_hdr->prev_size = ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN);
         next_hdr->flags = 0; // free
-        hdr->size = ALIGN_UP(size + CHUNK_HDR_SISE, CHUNK_ALIGN);
+        hdr->size = ALIGN_UP(size + CHUNK_HDR_SIZE, CHUNK_ALIGN);
       }
       return va; // 返回块头 VA，或返回数据区 va+CHUNK_HDR_SIZE
     }
@@ -95,12 +95,12 @@ uint64 sys_user_allocate_page(int n) {
     // return 0; // 分配失败
   }
 
-  return va + CHUNK_HDR_SISE; // 返回数据区地址(payload)
+  return va + CHUNK_HDR_SIZE; // 返回数据区地址(payload)
 }
 
 void collesce_forward(process *p, heap_chunk_t *hdr, uint64 va) {
   uint64 next_va = va + hdr->size;
-  if (next_va + CHUNK_HDR_SISE > p->heap_va + PGSIZE) return; // 越界
+  if (next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
 
   heap_chunk_t *next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_va);
   if (!next_hdr) return; // 未映射
@@ -111,7 +111,7 @@ void collesce_forward(process *p, heap_chunk_t *hdr, uint64 va) {
     uint64 next_next_va = next_va + next_hdr->size;
 
     // 处理下下个块的prev_size更新
-    if( next_next_va + CHUNK_HDR_SISE > p->heap_va + PGSIZE) return; // 越界
+    if( next_next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
     heap_chunk_t *next_next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_next_va);
     if (!next_next_hdr) return; // 未映射
     next_next_hdr->prev_size = hdr->size;
@@ -131,7 +131,7 @@ void collesce_backward(process *p, heap_chunk_t *hdr, uint64 va) {
     uint64 next_va = va + hdr->size;
 
     // 处理下个块的prev_size更新
-    if( next_va + CHUNK_HDR_SISE > p->heap_va + PGSIZE) return; // 越界
+    if( next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
     heap_chunk_t *next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_va);
     if (!next_hdr) return; // 未映射
     next_hdr->prev_size = prev_hdr->size;
@@ -143,7 +143,7 @@ void collesce_backward(process *p, heap_chunk_t *hdr, uint64 va) {
 //
 uint64 sys_user_free_page(uint64 va) {
   // TODO : 如果va是非法的???????
-  uint64 actual_va = va - CHUNK_HDR_SISE;
+  uint64 actual_va = va - CHUNK_HDR_SIZE;
   heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(current->pagetable, (void*)actual_va);
   hdr->flags = 0; // 标记为 free
   // 向前向后合并空闲块

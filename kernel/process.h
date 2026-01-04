@@ -43,8 +43,8 @@ extern uint64 g_ufree_page;
 
 /* Below are macro, data structures, or functions for better_malloc or better_free */
 #define CHUNK_ALIGN 16
-#define CHUNK_HDR_SISE 16
-#define CHUNK_MIN_SIZE (CHUNK_HDR_SISE + CHUNK_ALIGN)
+#define CHUNK_HDR_SIZE 16
+#define CHUNK_MIN_SIZE (CHUNK_HDR_SIZE + CHUNK_ALIGN)
 #define CHUNK_IS_FREE(c) ((c)->flags == 0)
 #define ALIGN_UP(size, align) (((size) + (align)-1) & ~((align)-1))
 
