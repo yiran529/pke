@@ -139,7 +139,7 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
 
   // For this multicore challenge, we do not rely on machine-mode interrupts (timer).
   // Keep MIE clear to avoid unexpected machine-level traps while harts are parked.
-  // write_csr(mstatus, read_csr(mstatus) | MSTATUS_MIE);
+  write_csr(mstatus, read_csr(mstatus) | MSTATUS_MIE);
 
   // delegate all interrupts and exceptions to supervisor mode.
   // delegate_traps() is defined above.
@@ -151,7 +151,7 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
   // init timing. added @lab1_3
   // In multicore challenge we do not rely on machine timer ticks; disable timerinit to
   // avoid extra machine-mode interrupts that can interfere with parked harts on exit.
-  //timerinit(hartid);
+  timerinit(hartid);
 
   // switch to supervisor mode (S mode) and jump to s_start(), i.e., set pc to mepc
   asm volatile("mret");
