@@ -9,6 +9,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "util/functions.h"
+#include "config.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -31,19 +32,23 @@ static void handle_syscall(trapframe *tf) {
       tf->regs.a4, tf->regs.a5, tf->regs.a6, tf->regs.a7);
 }
 
-//
-// global variable that store the recorded "ticks". added @lab1_3
-static uint64 g_ticks = 0;
+
+// global variable that store the recorded "ticks" per hart. In multicore each hart has
+// its own timer interrupt stream, so maintaining per-hart counters avoids races.
+static uint64 g_ticks[NCPU] = {0};
 //
 // added @lab1_3
 //
 void handle_mtimer_trap() {
-  sprint("Ticks %d\n", g_ticks);
-  // TODO (lab1_3): increase g_ticks to record this "tick", and then clear the "SIP"
-  // field in sip register.
-  // hint: use write_csr to disable the SIP_SSIP bit in sip.
-  // panic( "lab1_3: increase g_ticks by one, and clear SIP field in sip register.\n" );
-  g_ticks++;
+
+  int hid = read_tp();
+
+  // Record per-hart tick. Using separate slots avoids inter-hart interference when
+  // timers fire independently.
+  g_ticks[hid]++;
+  sprint("hartid = %d: Ticks %d\n", hid, g_ticks[hid]);
+
+  // Clear the software interrupt bit so that we can receive the next timer interrupt.
   write_csr(sip, read_csr(sip) & ~SIP_SSIP);
 }
 
@@ -61,8 +66,10 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
       // panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
+      int hid = read_tp();
+      process* p = current[hid];
       void *pa = alloc_page();
-      user_vm_map((pagetable_t)(current->pagetable),
+      user_vm_map((pagetable_t)(p->pagetable),
                 ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa,
                 prot_to_type(PROT_WRITE | PROT_READ, 1));
       break;
@@ -87,9 +94,11 @@ void smode_trap_handler(void) {
   // sprint("User pagetable was: 0x%lx\n", (uint64)current->pagetable);
   // sprint("Result: MMU can't auto-translate user addresses anymore!\n\n");
 
-  assert(current);
-  // save user process counter.
-  current->trapframe->epc = read_csr(sepc);
+  int hid = read_tp();
+  process *p = current[hid];
+  assert(p);
+  // save user process counter for the hart-local process so we can resume correctly.
+  p->trapframe->epc = read_csr(sepc);
 
   // if the cause of trap is syscall from user application.
   // read_csr() and CAUSE_USER_ECALL are macros defined in kernel/riscv.h
@@ -98,7 +107,8 @@ void smode_trap_handler(void) {
   // use switch-case instead of if-else, as there are many cases since lab2_3.
   switch (cause) {
     case CAUSE_USER_ECALL:
-      handle_syscall(current->trapframe);
+      // handle_syscall(current->trapframe);
+      handle_syscall(p->trapframe);
       break;
     case CAUSE_MTIMER_S_TRAP:
       handle_mtimer_trap();
@@ -117,5 +127,5 @@ void smode_trap_handler(void) {
   }
 
   // continue (come back to) the execution of current process.
-  switch_to(current);
+  switch_to(p);
 }
