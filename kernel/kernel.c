@@ -10,8 +10,9 @@
 
 #include "spike_interface/spike_utils.h"
 
-// process is a structure defined in kernel/process.h
-process user_app;
+// process is a structure defined in kernel/process.h. We keep one per hart to avoid
+// different harts overwriting the same process/trapframe metadata in multicore mode.
+process user_app[NCPU];
 
 //
 // load the elf, and construct a "process" (with only a trapframe).
@@ -51,11 +52,12 @@ int s_start(void) {
   write_csr(satp, 0);
 
   // the application code (elf) is first loaded into memory, and then put into execution
-  load_user_program(&user_app);
+  process *p = &user_app[hartid];
+  load_user_program(p);
 
   sprint("hartid = %d: Switch to user mode...\n", hartid);
   // switch_to() is defined in kernel/process.c
-  switch_to(&user_app);
+  switch_to(p);
 
   // we should never reach here.
   return 0;

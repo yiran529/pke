@@ -14,8 +14,6 @@
 // handling the syscalls. will call do_syscall() defined in kernel/syscall.c
 //
 static void handle_syscall(trapframe *tf) {
-  // Debug: log which syscall and hart for multicore bring-up.
-  sprint("hartid = %d: syscall num %ld\n", read_tp(), tf->regs.a0);
   // tf->epc points to the address that our computer will jump to after the trap handling.
   // for a syscall, we should return to the NEXT instruction after its handling.
   // in RV64G, each instruction occupies exactly 32 bits (i.e., 4 Bytes)
@@ -44,7 +42,6 @@ void handle_mtimer_trap() {
   // Record per-hart tick. Using separate slots avoids inter-hart interference when
   // timers fire independently.
   g_ticks[hid]++;
-  sprint("hartid = %d: Ticks %d\n", hid, g_ticks[hid]);
 
   // Clear the software interrupt bit so that we can receive the next timer interrupt.
   write_csr(sip, read_csr(sip) & ~SIP_SSIP);

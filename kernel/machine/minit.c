@@ -124,7 +124,7 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
   sync_barrier(&g_init_barrier, NCPU);
 
   // save the address of trap frame for interrupt in M mode to "mscratch". Use the
-  // per-hart slot to avoid corruption when multiple harts take M-mode traps.
+  // per-hart slot to avoid corruption when multiple harts take M-mod traps.
   write_csr(mscratch, &g_itrframe[hartid]);
 
   // set previous privilege mode to S (Supervisor), and will enter S mode after 'mret'

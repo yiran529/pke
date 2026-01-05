@@ -49,7 +49,7 @@ ssize_t sys_user_exit(uint64 code) {
     while (newval < NCPU) {
       newval = exit_count; // busy-wait; simple and sufficient for this lab
     }
-    sprint("hartid = %d: shutdown with code:%d.\\n", hid, code);
+    sprint("hartid = %d: shutdown with code:%d.\n", hid, code);
     shutdown(code);
   }
 
