@@ -6,7 +6,6 @@
 
 int main(void) {
   void *p[N];
-
   for (int i = 0; i < N; i++) {
     p[i] = naive_malloc();
     int *pi = p[i];

@@ -95,10 +95,10 @@ uint64 sys_user_allocate_page() {
   process* p = current[hid];
 
   void* pa = alloc_page();
-  /*取当前“用户简单堆”指针的当前位置作为本次分配的虚拟页起始地址。
-  g_ufree_page 是一个单调递增游标，表示下一个可用的用户虚拟地址（位于用户进程的“自由区”起点之后）*/
-  uint64 va = g_ufree_page;
-  g_ufree_page += PGSIZE;
+  /*取当前进程“用户简单堆”指针的当前位置作为本次分配的虚拟页起始地址。
+  ufree_page 是每个进程独立的单调递增游标，表示该进程下一个可用的用户虚拟地址*/
+  uint64 va = p->ufree_page;
+  p->ufree_page += PGSIZE;
   user_vm_map((pagetable_t)p->pagetable, va, PGSIZE, (uint64)pa,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
   sprint("hartid = %d: vaddr 0x%x is mapped to paddr 0x%x\n", hid, va, pa);

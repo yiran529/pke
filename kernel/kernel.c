@@ -44,7 +44,7 @@ void enable_paging() {
 void load_user_program(process *proc) {
   int hartid = read_tp();
 
-  sprint("User application is loading.\n");
+  sprint("hartid = %d: User application is loading.\n", hartid);
   // allocate a page to store the trapframe. alloc_page is defined in kernel/pmm.c. added @lab2_1
   proc->trapframe = (trapframe *)alloc_page();
   memset(proc->trapframe, 0, sizeof(trapframe));
@@ -58,7 +58,10 @@ void load_user_program(process *proc) {
   uint64 user_stack = (uint64)alloc_page();       //phisical address of user stack bottom
 
   // USER_STACK_TOP = 0x7ffff000, defined in kernel/memlayout.h
-  proc->trapframe->regs.sp = USER_STACK_BASE(hartid);  //virtual address of user stack top
+  proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+
+  // initialize per-process user free VA cursor (naive heap base)
+  proc->ufree_page = USER_FREE_ADDRESS_START;
 
   sprint("hartid = %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", hartid, 
     proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
@@ -68,10 +71,10 @@ void load_user_program(process *proc) {
 
   // populate the page table of user application. added @lab2_1
   // map user stack in userspace, user_vm_map is defined in kernel/vmm.c
-  user_vm_map((pagetable_t)proc->pagetable, USER_STACK_BASE(hartid) - PGSIZE, PGSIZE, user_stack,
+  user_vm_map((pagetable_t)proc->pagetable, USER_STACK_TOP - PGSIZE, PGSIZE, user_stack,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
 
-  // map trapframe in user space (direct mapping as in kernel space).
+  // map trapframe in user space (direct mapping as in kernel space). 
   user_vm_map((pagetable_t)proc->pagetable, (uint64)proc->trapframe, PGSIZE, (uint64)proc->trapframe,
          prot_to_type(PROT_WRITE | PROT_READ, 0));
 
@@ -94,18 +97,16 @@ int s_start(void) {
 
   // Only hart 0 performs one-time kernel initialization; others wait.
   if (hartid == 0) {
-        // init physical memory manager
-        pmm_init();
+    // init physical memory manager
+    pmm_init();
 
-        // build the kernel page table
-        kern_vm_init();
+    // build the kernel page table
+    kern_vm_init();
 
-        // the code now formally works in paging mode, meaning the page table is now in use.
-        sprint("kernel page table is on \n");
+    // the code now formally works in paging mode, meaning the page table is now in use.
+    sprint("kernel page table is on \n");
 
   }
-
-  vm_alloc_stage[hartid] = 1;
 
   // synchronize: secondary harts wait for hart 0 to finish setup
   sync_barrier(&g_s_init_barrier, NCPU);
@@ -113,6 +114,7 @@ int s_start(void) {
   // Each hart installs the kernel page table (built by hart 0) locally.
   enable_paging();
 
+  // Each hart loads and runs its own user program (argv[hartid]).
   process *p = &user_app[hartid];
   load_user_program(p);
 

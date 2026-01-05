@@ -26,9 +26,6 @@ extern void return_to_user(trapframe *, uint64 satp);
 // an array indexed by mhartid.
 process* current[NCPU] = {0};
 
-// points to the first free page in our simple heap. added @lab2_2
-uint64 g_ufree_page = USER_FREE_ADDRESS_START;
-
 //
 // switch to a user-mode process
 //
@@ -36,6 +33,8 @@ void switch_to(process* proc) {
   assert(proc);
   int hid = read_tp();
   current[hid] = proc; // record current process for this hart only
+  // mark that subsequent allocations come from user space on this hart
+  vm_alloc_stage[hid] = 1;
 
 
   // write the smode_trap_vector (64-bit func. address) defined in kernel/strap_vector.S

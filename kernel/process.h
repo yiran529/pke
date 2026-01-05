@@ -27,6 +27,8 @@ typedef struct process_t {
   pagetable_t pagetable;
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
+  // next free user virtual address cursor (per-process heap base for naive_malloc)
+  uint64 ufree_page;
 }process;
 
 // switch to run user app
@@ -36,8 +38,5 @@ void switch_to(process*);
 // In multicore, timer/syscall traps must return to the process that was running on that
 // hart, so we store per-hart 'current'.
 extern process* current[NCPU];
-
-// address of the first free page in our simple heap. added @lab2_2
-extern uint64 g_ufree_page;
 
 #endif
