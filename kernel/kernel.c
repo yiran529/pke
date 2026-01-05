@@ -10,6 +10,7 @@
 #include "vmm.h"
 #include "memlayout.h"
 #include "spike_interface/spike_utils.h"
+#include "config.h"
 
 // process is a structure defined in kernel/process.h
 process user_app;
@@ -36,6 +37,8 @@ void enable_paging() {
 // load_bincode_from_host_elf is defined in elf.c
 //
 void load_user_program(process *proc) {
+  int hartid = read_tp();
+
   sprint("User application is loading.\n");
   // allocate a page to store the trapframe. alloc_page is defined in kernel/pmm.c. added @lab2_1
   proc->trapframe = (trapframe *)alloc_page();
@@ -50,7 +53,7 @@ void load_user_program(process *proc) {
   uint64 user_stack = (uint64)alloc_page();       //phisical address of user stack bottom
 
   // USER_STACK_TOP = 0x7ffff000, defined in kernel/memlayout.h
-  proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+  proc->trapframe->regs.sp = USER_STACK_BASE(hartid);  //virtual address of user stack top
 
   sprint("hartid = ?: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", proc->trapframe,
          proc->trapframe->regs.sp, proc->kstack);
@@ -60,7 +63,7 @@ void load_user_program(process *proc) {
 
   // populate the page table of user application. added @lab2_1
   // map user stack in userspace, user_vm_map is defined in kernel/vmm.c
-  user_vm_map((pagetable_t)proc->pagetable, USER_STACK_TOP - PGSIZE, PGSIZE, user_stack,
+  user_vm_map((pagetable_t)proc->pagetable, USER_STACK_BASE(hartid) - PGSIZE, PGSIZE, user_stack,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
 
   // map trapframe in user space (direct mapping as in kernel space).
@@ -77,7 +80,8 @@ void load_user_program(process *proc) {
 // s_start: S-mode entry point of riscv-pke OS kernel.
 //
 int s_start(void) {
-  sprint("hartid = ?: Enter supervisor mode...\n");
+  int hartid = read_tp();
+  sprint("hartid = %d: Enter supervisor mode...\n", hartid);
   // in the beginning, we use Bare mode (direct) memory mapping as in lab1.
   // but now, we are going to switch to the paging mode @lab2_1.
   // note, the code still works in Bare mode when calling pmm_init() and kern_vm_init().
@@ -97,9 +101,7 @@ int s_start(void) {
   // the application code (elf) is first loaded into memory, and then put into execution
   load_user_program(&user_app);
 
-  sprint("hartid = ?: Switch to user mode...\n");
-  
-  uint64 hartid = 0;
+  sprint("hartid = %d: Switch to user mode...\n", hartid);
   
   vm_alloc_stage[hartid] = 1;
   // switch_to() is defined in kernel/process.c
