@@ -60,6 +60,12 @@ ssize_t sys_user_exit(uint64 code) {
 
   // Non-zero harts just park; hart0 will eventually power off when counter reaches
   // NCPU.
+  /*
+  作用：进入低功耗/空转状态，同时保持在 S 态；不会继续执行后续代码，防止已退出的 hart 触碰无效指针或重复触发 trap。
+  多核理由：只有 hart0 在所有 hart 退出后调用 shutdown。其他 hart 先退出时必须留在安全的停机位置，等待 hart0 关机；
+    用 WFI 比死循环空跑更符合架构习惯，且可响应需要时的外部中断（本实验关了 sie/sip，不会再被唤醒）。
+  安全性：在它之前我们已关 sie/sip，所以不会被 S 态定时器等再次打断，确保 hart 安全停住。
+   */
   while (1) asm volatile("wfi");
 }
 
