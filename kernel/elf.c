@@ -121,16 +121,23 @@ void load_bincode_from_host_elf(process *p) {
 
   // retrieve command line arguements
   size_t argc = parse_args(&arg_bug_msg);
-  if (!argc) panic("You need to specify the application program!\n");
+  if (argc < NCPU) panic("You need to specify at least %d application programs!\n", NCPU);
 
-  sprint("hartid = ?: Application: %s\n", arg_bug_msg.argv[0]);
+  int hartid = read_tp(); // mhartid not accessible in S-mode; tp set in m_start
+  if (hartid >= argc) panic("hart %d cannot find its application argument.\n", hartid);
+
+  // In multicore mode, each hart picks its own argv slot: hart0->argv[0], hart1->argv[1].
+  // This guarantees app0/app1分别运行在不同核。
+  char *app_path = arg_bug_msg.argv[hartid];
+
+  sprint("hartid = %d: Application: %s\n", hartid, app_path);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
   // elf_info is defined above, used to tie the elf file and its corresponding process.
   elf_info info;
 
-  info.f = spike_file_open(arg_bug_msg.argv[0], O_RDONLY, 0);
+  info.f = spike_file_open(app_path, O_RDONLY, 0);
   info.p = p;
   // IS_ERR_VALUE is a macro defined in spike_interface/spike_htif.h
   if (IS_ERR_VALUE(info.f)) panic("Fail on openning the input application program.\n");
@@ -148,5 +155,5 @@ void load_bincode_from_host_elf(process *p) {
   // close the host spike file
   spike_file_close( info.f );
 
-  sprint("hartid = ?: Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  sprint("hartid = %d: Application program entry point (virtual address): 0x%lx\n", hartid, p->trapframe->epc);
 }

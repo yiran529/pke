@@ -15,7 +15,7 @@ extern uint64 g_mem_size;
 static uint64 free_mem_start_addr;  //beginning address of free memory
 static uint64 free_mem_end_addr;    //end address of free memory (not included)
 
-int vm_alloc_stage[NCPU] = { 0 }; // 0 for kernel alloc, 1 for user alloc
+int vm_alloc_stage[NCPU] = { 0 }; 
 typedef struct node {
   struct node *next;
 } list_node;

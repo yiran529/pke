@@ -121,33 +121,48 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
   // before it is ready.
   sync_barrier(&g_init_barrier, NCPU);
 
-  // save the address of trap frame for interrupt in M mode to "mscratch". Use the
-  // per-hart slot to avoid corruption when multiple harts take M-mode traps.
+  // save the address of trap frame for interrupt in M mode to "mscratch".
+  // mscratch 是 M 态陷入时的临时寄存器存放区指针；填入按 hart 划分的 g_itrframe
+  // 可让每个 hart 在陷入时有独立的保存区，避免多核同时陷入时互相覆盖寄存器。
   write_csr(mscratch, &g_itrframe[hartid]);
 
   // set previous privilege mode to S (Supervisor), and will enter S mode after 'mret'
-  // write_csr is a macro defined in kernel/riscv.h
+  // mstatus 的 MPP 字段记录 mret 返回时要进入的目标特权级；清零后置为 S
+  // 等于告诉硬件：mret 应当跳转到 S 态，从而完成从引导的 M 态降级。
   write_csr(mstatus, ((read_csr(mstatus) & ~MSTATUS_MPP_MASK) | MSTATUS_MPP_S));
 
   // set M Exception Program Counter to sstart, for mret (requires gcc -mcmodel=medany)
+  // mepc 保存 mret 返回的指令地址；设为 s_start 就是指定返回后执行的入口，
+  // 因此 mret 会将 PC 载入此值，从而跳入 S 态内核入口。
   write_csr(mepc, (uint64)s_start);
 
   // setup trap handling vector for machine mode. added @lab1_2
+  // mtvec 决定 M 态异常/中断时跳转的入口；设为 mtrapvec 后，后续任何 M 态陷入
+  // 都会跳到该向量，确保有统一的 M 态陷入处理流程。
   write_csr(mtvec, (uint64)mtrapvec);
 
   // enable machine-mode interrupts. added @lab1_3
+  // mstatus.MIE 是 M 态全局中断使能位；置 1 后配合 mie/sie 的具体使能，
+  // 才会真正允许 M 态响应中断（如计时器触发）。
   write_csr(mstatus, read_csr(mstatus) | MSTATUS_MIE);
 
   // delegate all interrupts and exceptions to supervisor mode.
-  // delegate_traps() is defined above.
+  // 委派后，硬件在触发这些中断/异常时直接转交给 S 态处理，M 态无需介入，
+  // 这样内核的大部分逻辑运行在 S 态，符合分层特权模型。具体位由 delegate_traps 设置。
   delegate_traps();
 
   // also enables interrupt handling in supervisor mode. added @lab1_3
+  // sie 是 S 态中断使能寄存器；打开 SEIE/STIE/SSIE 位后，配合先前的委派，
+  // S 态即可响应外部/定时器/软件中断，实现常规 OS 中断路径。
   write_csr(sie, read_csr(sie) | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
   // init timing. added @lab1_3
+  // timerinit 为当前 hart 设置 CLINT 的 mtimecmp，使其在未来某时间触发 MTI 中断；
+  // 结合上面的中断使能，可周期性获得时钟中断用于调度等功能。
   timerinit(hartid);
 
   // switch to supervisor mode (S mode) and jump to s_start(), i.e., set pc to mepc
+  // mret 会按 mstatus.MPP 切换到 S 态，并将 PC 置为 mepc；因此在完成寄存器配置、
+  // 委派与中断使能后执行 mret，正式进入 S 态内核执行流。
   asm volatile("mret");
 }

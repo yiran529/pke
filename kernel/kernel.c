@@ -11,9 +11,14 @@
 #include "memlayout.h"
 #include "spike_interface/spike_utils.h"
 #include "config.h"
+#include "sync_utils.h"
 
-// process is a structure defined in kernel/process.h
-process user_app;
+// process is a structure defined in kernel/process.h. We keep one per hart to avoid
+// different harts overwriting the same process/trapframe metadata in multicore mode.
+process user_app[NCPU];
+
+// Barrier to ensure only one hart performs one-time S-mode init, others wait.
+static volatile int g_s_init_barrier = 0;
 
 //
 // trap_sec_start points to the beginning of S-mode trap segment (i.e., the entry point of
@@ -55,8 +60,8 @@ void load_user_program(process *proc) {
   // USER_STACK_TOP = 0x7ffff000, defined in kernel/memlayout.h
   proc->trapframe->regs.sp = USER_STACK_BASE(hartid);  //virtual address of user stack top
 
-  sprint("hartid = ?: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", proc->trapframe,
-         proc->trapframe->regs.sp, proc->kstack);
+  sprint("hartid = %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", hartid, 
+    proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
 
   // load_bincode_from_host_elf() is defined in kernel/elf.c
   load_bincode_from_host_elf(proc);
@@ -87,25 +92,32 @@ int s_start(void) {
   // note, the code still works in Bare mode when calling pmm_init() and kern_vm_init().
   write_csr(satp, 0);
 
-  // init phisical memory manager
-  pmm_init();
+  // Only hart 0 performs one-time kernel initialization; others wait.
+  if (hartid == 0) {
+        // init physical memory manager
+        pmm_init();
 
-  // build the kernel page table
-  kern_vm_init();
+        // build the kernel page table
+        kern_vm_init();
 
-  // now, switch to paging mode by turning on paging (SV39)
+        // the code now formally works in paging mode, meaning the page table is now in use.
+        sprint("kernel page table is on \n");
+
+  }
+
+  vm_alloc_stage[hartid] = 1;
+
+  // synchronize: secondary harts wait for hart 0 to finish setup
+  sync_barrier(&g_s_init_barrier, NCPU);
+
+  // Each hart installs the kernel page table (built by hart 0) locally.
   enable_paging();
-  // the code now formally works in paging mode, meaning the page table is now in use.
-  sprint("kernel page table is on \n");
 
-  // the application code (elf) is first loaded into memory, and then put into execution
-  load_user_program(&user_app);
+  process *p = &user_app[hartid];
+  load_user_program(p);
 
   sprint("hartid = %d: Switch to user mode...\n", hartid);
-  
-  vm_alloc_stage[hartid] = 1;
-  // switch_to() is defined in kernel/process.c
-  switch_to(&user_app);
+  switch_to(p);
 
   // we should never reach here.
   return 0;
