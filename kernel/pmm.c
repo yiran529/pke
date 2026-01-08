@@ -22,6 +22,12 @@ typedef struct node {
 // g_free_mem_list is the head of the list of free physical memory pages
 static list_node g_free_mem_list;
 
+// used for reference counting of physical pages to implement copy-on-write
+// 全局引用计数数组 & 元数据
+static uint16_t *page_refcount = 0; // 指向 refcount 数组
+static uint64_t nphys_pages = 0;    // 物理页总数
+static uint64_t refcount_pages = 0; // 用于存放数组所占页数
+
 //
 // actually creates the freepage list. each page occupies 4KB (PGSIZE), i.e., small page.
 // PGSIZE is defined in kernel/riscv.h, ROUNDUP is defined in util/functions.h.
@@ -66,10 +72,13 @@ void pmm_init() {
   uint64 g_kernel_end = (uint64)&_end;
 
   uint64 pke_kernel_size = g_kernel_end - g_kernel_start;
+  // 打印内核在虚拟地址空间中的起止地址以及大小，便于调试
   sprint("PKE kernel start 0x%lx, PKE kernel end: 0x%lx, PKE kernel size: 0x%lx .\n",
     g_kernel_start, g_kernel_end, pke_kernel_size);
 
   // free memory starts from the end of PKE kernel and must be page-aligined
+  // 将可用物理内存的起始地址设置为内核结束地址向上对齐到页面边界
+  // 这样保证后续按页管理时，空闲链表中的每个条目都是整页对齐的地址
   free_mem_start_addr = ROUNDUP(g_kernel_end , PGSIZE);
 
   // recompute g_mem_size to limit the physical memory space that our riscv-pke kernel
@@ -78,11 +87,55 @@ void pmm_init() {
   if( g_mem_size < pke_kernel_size )
     panic( "Error when recomputing physical memory size (g_mem_size).\n" );
 
+  // 计算可管理的物理内存结束地址（不包含），这里用 DRAM_BASE 作为物理内存基地址
+  // 注意：g_mem_size 已可能被限制为 PKE_MAX_ALLOWABLE_RAM，以避免使用模拟器提供的全部内存
   free_mem_end_addr = g_mem_size + DRAM_BASE;
+
+  // Below are initializing the page reference count array for copy-on-write
+  // 1) 计算物理页总数（基于 DRAM_BASE 到 free_mem_end_addr）
+  uint64 total_bytes = free_mem_end_addr - free_mem_start_addr; // 之类不需要+1，因为end_addr本身不包含在内
+  sprint("free_mem_start_addr = 0x%lx, free_mem_end_addr = 0x%lx, total_bytes = %ld \n",
+    free_mem_start_addr, free_mem_end_addr, total_bytes);
+  nphys_pages = total_bytes / PGSIZE;
+
+  // 2) 计算存放 refcount 数组需要的页数
+  uint64 bytes_for_ref = nphys_pages * sizeof(uint16_t); // 数组占据的字节数
+  refcount_pages = (bytes_for_ref + PGSIZE - 1) / PGSIZE; // 向上取整页数
+
+  // 3) 将这块内存从 free pool 中保留出来（放在 free region 的起始处）
+  page_refcount = (uint16_t *)free_mem_start_addr;
+  sprint("total_bytes = %ld, nphys_pages = %ld, setting up page refcount array at address 0x%lx, "
+    "size: %ld bytes (%ld pages) \n", total_bytes, nphys_pages, free_mem_start_addr, bytes_for_ref, refcount_pages);
+  // 清零（注意：此处 page_refcount 处于尚未回收为 free list 的范围）
+  memset(page_refcount, 0, refcount_pages * PGSIZE);
+  sprint("ok2\n");
+
+  // 4) 移动 free_mem_start_addr，避免后续 create_freepage_list 回收这部分页
+  free_mem_start_addr += refcount_pages * PGSIZE;
+
+  sprint("finish setting up page refcount array, nphys_pages: %ld, "
+    "refcount_pages: %ld \n", nphys_pages, refcount_pages);
+
+  // 打印空闲物理内存范围（起始地址已向上对齐为页边界，结束地址为最后可用字节）
   sprint("free physical memory address: [0x%lx, 0x%lx] \n", free_mem_start_addr,
     free_mem_end_addr - 1);
-
+  
   sprint("kernel memory manager is initializing ...\n");
   // create the list of free pages
+  // 这里创建空闲页链表：遍历 [free_mem_start_addr, free_mem_end_addr) 区间内的每一整页
+  // 并把每页加入到 g_free_mem_list 链表中，供 alloc_page()/free_page() 使用。
+  // 注意事项：
+  // - create_freepage_list 会对每个页面调用 free_page()，因此 free_page() 中的
+  //   范围检查（pa 在 free_mem_start_addr 与 free_mem_end_addr 之间）必须已生效。
+  // - 如果将来需要为内核元数据（例如页引用计数数组 page_refcount）预留空间，
+  //   应在调用 create_freepage_list 之前改变 free_mem_start_addr，从而保护这些页不被回收。
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
+}
+
+void inc_page_refcount(uint64 pa) {
+  uint64 page_index = (pa - free_mem_start_addr) / PGSIZE;
+  if (page_index >= nphys_pages) {
+    panic("inc_page_refcount: invalid physical address 0x%lx\n", pa);
+  }
+  page_refcount[page_index]++;
 }

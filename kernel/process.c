@@ -216,10 +216,30 @@ int do_fork( process* parent)
             if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
               continue;
 
-            void* child_pa = alloc_page();
-            memcpy(child_pa, (void*)lookup_pa(parent->pagetable, heap_block), PGSIZE);
-            user_vm_map((pagetable_t)child->pagetable, heap_block, PGSIZE, (uint64)child_pa,
+            // for copy-on-write, we don't need to copy the physical page explicitly for now, just map it.
+            // void* child_pa = alloc_page();
+            // memcpy(child_pa, (void*)lookup_pa(parent->pagetable, heap_block), PGSIZE);
+            uint64 parent_pa = lookup_pa(parent->pagetable, heap_block);
+            user_vm_map((pagetable_t)child->pagetable, heap_block, PGSIZE, parent_pa,
                         prot_to_type(PROT_WRITE | PROT_READ, 1));
+
+            // set the PTE_COW and clear PTE_W in page table
+            pte_t* pte = page_walk(parent->pagetable, heap_block, 0);
+            if (pte == 0) {
+              panic("do_fork: cannot find PTE for parent's heap block 0x%lx\n", heap_block);
+            }
+            SET_PTE_COW(pte);
+            CLEAR_PTE_W(pte);
+            pte = page_walk(child->pagetable, heap_block, 0);
+            if (pte == 0) {
+              panic("do_fork: cannot find PTE for child's heap block 0x%lx\n", heap_block);
+            }
+            SET_PTE_COW(pte);
+            CLEAR_PTE_W(pte);
+
+            inc_page_refcount(parent_pa);
+
+            flush_tlb();
           }
 
           child->mapped_info[HEAP_SEGMENT].npages = parent->mapped_info[HEAP_SEGMENT].npages;

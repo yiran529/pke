@@ -34,13 +34,33 @@ int map_pages(pagetable_t page_dir, uint64 va, uint64 size, uint64 pa, int perm)
 // convert permission code to permission types of PTE
 //
 uint64 prot_to_type(int prot, int user) {
-  uint64 perm = 0;
+  // 将 POSIX 风格的 prot 标志转换为 RISC-V PTE 权限位
+  // 参数：
+  //   prot - PROT_READ/PROT_WRITE/PROT_EXEC 的组合
+  //   user - 非 0 表示这是用户态页面，需要设置 PTE_U
+  // 返回：PTE 的权限位（不含 PTE_V）
+  uint64 perm = 0;                 // 组合后的权限位
+
+  // 如果请求可读，则设置 PTE_R；同时预置 PTE_A（已被访问）
+  // 预置 A 的做法会让内核认为页面已被访问过，某些实现会让硬件自己设置 A。
   if (prot & PROT_READ) perm |= PTE_R | PTE_A;
+
+  // 如果请求可写，则设置 PTE_W；同时预置 PTE_D（脏位），表示页面可写
+  // 注意：规范上 W=1 而 R=0 是非法的，调用方应避免这种组合。
   if (prot & PROT_WRITE) perm |= PTE_W | PTE_D;
+
+  // 如果请求可执行，则设置 PTE_X；同样预置 PTE_A 表示曾被执行/访问
   if (prot & PROT_EXEC) perm |= PTE_X | PTE_A;
+
+  // 如果没有任何权限位被设置（prot 为 0），这里默认至少给出可读权限
+  // 这样返回值不会为 0（完全不可访问）。如果需要不可访问的 guard page，
+  // 应修改这里的策略或在调用处单独处理。
   if (perm == 0) perm = PTE_R;
+
+  // 用户页标志：若为用户页，设置 PTE_U
   if (user) perm |= PTE_U;
-  return perm;
+
+  return perm; // 返回最终组合的权限位
 }
 
 //
