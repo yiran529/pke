@@ -19,6 +19,6 @@ int main(void) {
     printu(">>> user 1: %d\n", *pi);
     naive_free(p[i]);
   }
-
+  
   exit(0);
 }

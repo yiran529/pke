@@ -59,6 +59,7 @@ void load_user_program(process *proc) {
 
   // USER_STACK_TOP = 0x7ffff000, defined in kernel/memlayout.h
   proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+  proc->trapframe->regs.tp = hartid;        //store hartid in tp register
 
   // initialize per-process user free VA cursor (naive heap base)
   proc->ufree_page = USER_FREE_ADDRESS_START;
