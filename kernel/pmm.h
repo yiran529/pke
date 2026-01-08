@@ -11,4 +11,10 @@ void* alloc_page();
 void free_page(void* pa);
 
 void inc_page_refcount(uint64 pa);
+
+
+// inc/dec/get page refcount, all take a physical address (pa)
+void inc_page_refcount(uint64 pa);
+uint32 dec_page_refcount(uint64 pa); // return new count after decrement
+uint32 get_page_refcount(uint64 pa);
 #endif

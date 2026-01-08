@@ -14,6 +14,7 @@ extern uint64 g_mem_size;
 
 static uint64 free_mem_start_addr;  //beginning address of free memory
 static uint64 free_mem_end_addr;    //end address of free memory (not included)
+static uint64 page_base; // base physical address for page frame number 0(right after ROUNDUP(g_kernel_end , PGSIZE))
 
 typedef struct node {
   struct node *next;
@@ -24,9 +25,9 @@ static list_node g_free_mem_list;
 
 // used for reference counting of physical pages to implement copy-on-write
 // 全局引用计数数组 & 元数据
-static uint16_t *page_refcount = 0; // 指向 refcount 数组
-static uint64_t nphys_pages = 0;    // 物理页总数
-static uint64_t refcount_pages = 0; // 用于存放数组所占页数
+static uint32 *page_refcount = 0; // 指向 refcount 数组（使用 32-bit 以便原子操作支持）
+static uint64 nphys_pages = 0;    // 物理页总数
+static uint64 refcount_pages = 0; // 用于存放数组所占页数
 
 //
 // actually creates the freepage list. each page occupies 4KB (PGSIZE), i.e., small page.
@@ -99,11 +100,11 @@ void pmm_init() {
   nphys_pages = total_bytes / PGSIZE;
 
   // 2) 计算存放 refcount 数组需要的页数
-  uint64 bytes_for_ref = nphys_pages * sizeof(uint16_t); // 数组占据的字节数
+  uint64 bytes_for_ref = nphys_pages * sizeof(uint32); // 数组占据的字节数（使用 32-bit 条目）
   refcount_pages = (bytes_for_ref + PGSIZE - 1) / PGSIZE; // 向上取整页数
 
   // 3) 将这块内存从 free pool 中保留出来（放在 free region 的起始处）
-  page_refcount = (uint16_t *)free_mem_start_addr;
+  page_refcount = (uint32 *)free_mem_start_addr;
   sprint("total_bytes = %ld, nphys_pages = %ld, setting up page refcount array at address 0x%lx, "
     "size: %ld bytes (%ld pages) \n", total_bytes, nphys_pages, free_mem_start_addr, bytes_for_ref, refcount_pages);
   // 清零（注意：此处 page_refcount 处于尚未回收为 free list 的范围）
@@ -111,6 +112,7 @@ void pmm_init() {
   sprint("ok2\n");
 
   // 4) 移动 free_mem_start_addr，避免后续 create_freepage_list 回收这部分页
+  page_base = free_mem_start_addr;
   free_mem_start_addr += refcount_pages * PGSIZE;
 
   sprint("finish setting up page refcount array, nphys_pages: %ld, "
@@ -132,10 +134,44 @@ void pmm_init() {
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
 }
 
+// helper: convert physical address to page index (based on DRAM_BASE)
+// helper: convert physical address to page index (based on page_base)
+static inline uint64 pa_to_page_index(uint64 pa) {
+  if (pa >= free_mem_end_addr || pa < page_base)
+    return (uint64)-1; // invalid
+  return (pa - page_base) / PGSIZE;
+}
+
 void inc_page_refcount(uint64 pa) {
-  uint64 page_index = (pa - free_mem_start_addr) / PGSIZE;
-  if (page_index >= nphys_pages) {
+  uint64 idx = pa_to_page_index(pa);
+  if (idx == (uint64)-1 || idx >= nphys_pages) {
     panic("inc_page_refcount: invalid physical address 0x%lx\n", pa);
   }
-  page_refcount[page_index]++;
+  // 原子加 1，返回值忽略
+  __sync_add_and_fetch(&page_refcount[idx], 1);
+}
+
+uint32 dec_page_refcount(uint64 pa) {
+  uint64 idx = pa_to_page_index(pa);
+  if (idx == (uint64)-1 || idx >= nphys_pages) {
+    panic("dec_page_refcount: invalid physical address 0x%lx\n", pa);
+  }
+  // 原子减 1，fetch-and-sub 返回减前的值
+  uint32 prev = __sync_fetch_and_sub(&page_refcount[idx], 1);
+  if (prev == 0) {
+    // 本来就是 0，BUG：不该减到负值
+    panic("dec_page_refcount: underflow at pa 0x%lx\n", pa);
+  }
+  uint32 now = prev - 1;
+  // 如果需要在计数减到 0 时自动释放物理页，可以在这里调用 free_page((void*)pa)
+  return now;
+}
+
+uint32 get_page_refcount(uint64 pa) {
+  uint64 idx = pa_to_page_index(pa);
+  if (idx == (uint64)-1 || idx >= nphys_pages) {
+    panic("get_page_refcount: invalid physical address 0x%lx\n", pa);
+  }
+  // 原子读：用 fetch-and-add 0 或其他原子读
+  return __sync_add_and_fetch(&page_refcount[idx], 0);
 }

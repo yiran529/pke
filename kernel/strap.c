@@ -10,6 +10,7 @@
 #include "vmm.h"
 #include "sched.h"
 #include "util/functions.h"
+#include "util/string.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -63,6 +64,23 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       // virtual address that causes the page fault.
       // panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
       void *pa = alloc_page();
+      pte_t *pte = page_walk((pagetable_t)(current->pagetable),
+                            ROUNDDOWN(stval, PGSIZE), 1);
+      if(READ_PTE_COW(pte)) {
+        uint32 ref_count = dec_page_refcount(PTE2PA(*pte));
+        if(ref_count > 1) {
+          // 还有其他进程引用该页，分配新页并复制内容
+          void* new_pa = alloc_page();
+          memmove(new_pa, (void*)PTE2PA(*pte), PGSIZE);
+          user_vm_map((pagetable_t)(current->pagetable),
+                    ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)new_pa,
+                    prot_to_type(PROT_WRITE | PROT_READ, 1));
+          dec_page_refcount(PTE2PA(*pte)); // 减少原页引用计数
+        } else {
+          // 只有当前进程引用该页，直接设置为可写
+          SET_PTE_W(pte);
+        }
+      }
       user_vm_map((pagetable_t)(current->pagetable),
                 ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa,
                 prot_to_type(PROT_WRITE | PROT_READ, 1));

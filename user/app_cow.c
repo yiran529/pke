@@ -16,6 +16,7 @@ int main(void) {
   if (pid == 0) {
     printu("the physical address of child process heap before copy on write is: ");
     printpa(heap_data);
+    printu("heap_data va: %lx\n", (uint64)heap_data);
     heap_data[0] = 0;
     printu("the physical address of child process heap after copy on write is: ");
     printpa(heap_data);
