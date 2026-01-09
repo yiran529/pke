@@ -13,10 +13,14 @@ int main(void) {
   printu("the physical address of parent process heap is: ");
   printpa(heap_data);
   int pid = fork();
+  // if (pid != 0) {
+  //   naive_free(heap_data);
+  // }
   if (pid == 0) {
     printu("the physical address of child process heap before copy on write is: ");
     printpa(heap_data);
-    printu("heap_data va: %lx\n", (uint64)heap_data);
+    // printu("*heap_data before write: %d\n", heap_data[0]);
+    // printu("heap_data va: %lx\n", (uint64)heap_data);
     heap_data[0] = 0;
     printu("the physical address of child process heap after copy on write is: ");
     printpa(heap_data);
