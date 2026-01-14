@@ -284,3 +284,11 @@ int do_fork( process* parent)
 
   return child->pid;
 }
+
+int do_exec( process* proc, char* pathname ) {
+  sprint( "will exec a new program %s in process %d.\n", pathname, proc->pid );
+
+  load_bincode_from_host_elf_for_exec(proc, pathname);
+
+  return 0;
+}

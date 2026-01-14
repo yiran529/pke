@@ -170,3 +170,141 @@ void load_bincode_from_host_elf(process *p) {
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }
+
+/* Below are helper funcion for implmentation of exec.
+  Basically, they are 'exec verion' of the funcitons above. */
+
+//
+// ELF 文件读取所需的信息结构（使用 VFS）
+//
+typedef struct elf_vfs_info_t {
+  struct file *f;       // VFS 文件结构
+  process *p;           // 进程指针
+} elf_vfs_info;
+
+//
+// VFS版本的elf_alloc_mb函数 
+//
+static void *elf_alloc_mb_vfs(elf_ctx *ctx, uint64 elf_pa, uint64 elf_va, uint64 size) {
+  elf_vfs_info *msg = (elf_vfs_info *)ctx->info;
+  // we assume that size of proram segment is smaller than a page.
+  kassert(size < PGSIZE);
+  void *pa = alloc_page();
+  if (pa == 0) panic("uvmalloc mem alloc falied\n");
+
+  memset((void *)pa, 0, PGSIZE);
+  user_vm_map((pagetable_t)msg->p->pagetable, elf_va, PGSIZE, (uint64)pa,
+         prot_to_type(PROT_WRITE | PROT_READ | PROT_EXEC, 1));
+
+  return pa;
+}
+
+//
+// VFS 版本的文件读取函数（替代 spike_file_pread）
+//
+static uint64 elf_fpread_vfs(elf_ctx *ctx, void *dest, uint64 nb, uint64 offset) {
+  elf_vfs_info *msg = (elf_vfs_info *)ctx->info;
+  
+  // 使用 VFS 的 lseek 定位到指定偏移
+  vfs_lseek(msg->f, offset, SEEK_SET);
+  
+  // 通过 VFS 读取数据
+  return vfs_read(msg->f, (char*)dest, nb);
+}
+
+//
+// VFS 版本的 ELF 初始化（替代 elf_init）
+//
+static elf_status elf_init_vfs(elf_ctx *ctx, void *info) {
+  ctx->info = info;
+
+  // 从文件开头读取 ELF header
+  if (elf_fpread_vfs(ctx, &ctx->ehdr, sizeof(ctx->ehdr), 0) != sizeof(ctx->ehdr))
+    return EL_EIO;
+
+  // 检查 ELF 魔数
+  if (ctx->ehdr.magic != ELF_MAGIC)
+    return EL_NOTELF;
+
+  return EL_OK;
+}
+
+//
+// load the elf segments to memory regions.
+//
+elf_status elf_load_vfs(elf_ctx *ctx) {
+  // elf_prog_header structure is defined in kernel/elf.h
+  elf_prog_header ph_addr;
+  int i, off;
+
+  // traverse the elf program segment headers
+  for (i = 0, off = ctx->ehdr.phoff; i < ctx->ehdr.phnum; i++, off += sizeof(ph_addr)) {
+    // read segment headers
+    if (elf_fpread_vfs(ctx, (void *)&ph_addr, sizeof(ph_addr), off) != sizeof(ph_addr)) return EL_EIO;
+
+    if (ph_addr.type != ELF_PROG_LOAD) continue;
+    if (ph_addr.memsz < ph_addr.filesz) return EL_ERR;
+    if (ph_addr.vaddr + ph_addr.memsz < ph_addr.vaddr) return EL_ERR;
+
+    // allocate memory block before elf loading
+    void *dest = elf_alloc_mb_vfs(ctx, ph_addr.vaddr, ph_addr.vaddr, ph_addr.memsz);
+
+    // actual loading
+    if (elf_fpread_vfs(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
+      return EL_EIO;
+
+    // record the vm region in proc->mapped_info. added @lab3_1
+    int j;
+    for( j=0; j<PGSIZE/sizeof(mapped_region); j++ ) //seek the last mapped region
+      if( (process*)(((elf_vfs_info*)(ctx->info))->p)->mapped_info[j].va == 0x0 ) break;
+
+    ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].va = ph_addr.vaddr;
+    ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].npages = 1;
+
+    // SEGMENT_READABLE, SEGMENT_EXECUTABLE, SEGMENT_WRITABLE are defined in kernel/elf.h
+    if( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_EXECUTABLE) ){
+      ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].seg_type = CODE_SEGMENT;
+      sprint( "CODE_SEGMENT added at mapped info offset:%d\n", j );
+    }else if ( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_WRITABLE) ){
+      ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].seg_type = DATA_SEGMENT;
+      sprint( "DATA_SEGMENT added at mapped info offset:%d\n", j );
+    }else
+      panic( "unknown program segment encountered, segment flag:%d.\n", ph_addr.flags );
+
+    ((process*)(((elf_vfs_info*)(ctx->info))->p))->total_mapped_region ++;
+  }
+
+  return EL_OK;
+}
+
+//
+// load the elf of user application, by using the spike file interface.
+//
+void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
+  sprint("Application: %s\n", pathname);
+
+  //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
+  elf_ctx elfloader;
+  // elf_info is defined above, used to tie the elf file and its corresponding process.
+  elf_vfs_info info;
+
+  info.f = vfs_open(pathname, O_RDONLY);
+  info.p = p;
+  // IS_ERR_VALUE is a macro defined in spike_interface/spike_htif.h
+  if (info.f == NULL) panic("Fail on openning the input application program.\n");
+
+  // init elfloader context. elf_init() is defined above.
+  if (elf_init_vfs(&elfloader, &info) != EL_OK)
+    panic("fail to init elfloader.\n");
+
+  // load elf. elf_load() is defined above.
+  if (elf_load_vfs(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
+
+  // entry (virtual, also physical in lab1_x) address
+  p->trapframe->epc = elfloader.ehdr.entry;
+
+  // close the host spike file
+  vfs_close( info.f );
+
+  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
