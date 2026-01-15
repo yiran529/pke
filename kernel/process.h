@@ -43,6 +43,8 @@ enum segment_type {
   DATA_SEGMENT,    // ELF segment
 };
 
+#define MAX_MAPPED_REGION DATA_SEGMENT + 1
+
 // the VM regions mapped to a user process
 typedef struct mapped_region {
   uint64 va;       // mapped virtual address
@@ -106,6 +108,8 @@ process* alloc_process();
 int free_process( process* proc );
 // fork a child from parent
 int do_fork(process* parent);
+void refresh_process(process* proc);
+int do_exec(char *pathname);
 
 // current running process
 extern process* current;
