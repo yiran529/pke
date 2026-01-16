@@ -72,6 +72,8 @@ void switch_to(process* proc) {
 
   // return_to_user() is defined in kernel/strap_vector.S. switch to user mode with sret.
   // note, return_to_user takes two parameters @ and after lab2_1.
+  sprint("reach here in switch_to, about to return to user mode, proc pid=%d, epc=0x%lx\n",
+    proc->pid, proc->trapframe->epc);
   return_to_user(proc->trapframe, user_satp);
 }
 
@@ -180,7 +182,7 @@ void refresh_process(process* proc) {
   memset( proc->mapped_info, 0, PGSIZE );
   // map user stack in userspace
   user_vm_map((pagetable_t)proc->pagetable, USER_STACK_TOP - PGSIZE, PGSIZE,
-    user_stack, prot_to_type(PROT_WRITE | PROT_READ, 1)); //?
+    user_stack, prot_to_type(PROT_WRITE | PROT_READ, 1));
   proc->mapped_info[STACK_SEGMENT].va = USER_STACK_TOP - PGSIZE;
   proc->mapped_info[STACK_SEGMENT].npages = 1;
   proc->mapped_info[STACK_SEGMENT].seg_type = STACK_SEGMENT;
@@ -197,8 +199,8 @@ void refresh_process(process* proc) {
   proc->mapped_info[SYSTEM_SEGMENT].va = (uint64)trap_sec_start;
   proc->mapped_info[SYSTEM_SEGMENT].npages = 1;
   proc->mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
-  sprint("in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-    proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
+  sprint("refresh process: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+    proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
 
   // initialize the process's heap manager
   proc->user_heap.heap_top = USER_FREE_ADDRESS_START;
@@ -212,8 +214,9 @@ void refresh_process(process* proc) {
 
   proc->total_mapped_region = 4;
   // initialize files_struct
-  proc->pfiles = init_proc_file_management();
-  sprint("in alloc_proc. build proc_file_management successfully.\n");
+  // proc->pfiles = init_proc_file_management();
+  // we might not need to re-initialize proc_file_management here
+  sprint("Successfully refresh process %d.\n", proc->pid);
 
 }
 
@@ -350,30 +353,31 @@ int do_exec( process* proc, char* pathname ) {
   refresh_process( proc );
   load_bincode_from_host_elf_for_exec(proc, pathname);
 
-  // 释放旧的页表和堆页面
+  // 释放旧的页表和堆页面 /// 为了调试暂时注释掉
 
-  int free_block_filter[MAX_HEAP_PAGES]; /// 标记哪些堆页是被释放的数组
-  memset(free_block_filter, 0, MAX_HEAP_PAGES);
-  uint64 heap_bottom = old_heap.heap_bottom;
-  /// 标记已释放的堆页
-  for (int i = 0; i < old_heap.free_pages_count; i++) {
-    int index = (old_heap.free_pages_address[i] - heap_bottom) / PGSIZE;
-    free_block_filter[index] = 1;
-  }
-  // free old pagetable and heap pages
-  for (uint64 heap_block = old_heap.heap_bottom;
-             heap_block < old_heap.heap_top; heap_block += PGSIZE) {
-    if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
-      continue;
+  // int free_block_filter[MAX_HEAP_PAGES]; /// 标记哪些堆页是被释放的数组
+  // memset(free_block_filter, 0, MAX_HEAP_PAGES);
+  // uint64 heap_bottom = old_heap.heap_bottom;
+  // /// 标记已释放的堆页
+  // for (int i = 0; i < old_heap.free_pages_count; i++) {
+  //   int index = (old_heap.free_pages_address[i] - heap_bottom) / PGSIZE;
+  //   free_block_filter[index] = 1;
+  // }
+  // // free old pagetable and heap pages
+  // for (uint64 heap_block = old_heap.heap_bottom;
+  //            heap_block < old_heap.heap_top; heap_block += PGSIZE) {
+  //   if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
+  //     continue;
 
-    free_page( (void*)lookup_pa(old_pagetable, heap_block) );
-  }
-  // free old user stack
-  for (int i = 0; i < old_mapped_info[STACK_SEGMENT].npages; i++) {
-    free_page( (void*)(USER_STACK_TOP - PGSIZE - i * PGSIZE) );
-  }
-  // free old pagetable
-  free_page( (void*)old_pagetable );
+  //   free_page( (void*)lookup_pa(old_pagetable, heap_block) );
+  // }
+  // // free old user stack
+  // for (int i = 0; i < old_mapped_info[STACK_SEGMENT].npages; i++) {
+  //   free_page( user_va_to_pa(old_pagetable, (void*)(uint64)(USER_STACK_TOP - PGSIZE - i * PGSIZE)) );
+  // }
+  // // free old pagetable
+  // free_page( (void*)old_pagetable );
+  sprint("Exec completed for process %d.\n", proc->pid );
   
   return 0;
 }

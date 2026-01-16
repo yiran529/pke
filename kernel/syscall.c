@@ -234,7 +234,7 @@ ssize_t sys_user_exec(char *pathname) {
   char *pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathname);
   
   // 调用内核辅助函数执行 exec
-  return do_exec(pa);
+  return do_exec(current, pa);
 }
 
 //
