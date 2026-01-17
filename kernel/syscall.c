@@ -45,6 +45,8 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 //
 ssize_t sys_user_exit(uint64 code) {
   sprint("User exit with code:%d.\n", code);
+  if(current->parent) {current->parent->status = READY; }
+  if(current->parent) {insert_to_ready_queue( current->parent ); }
   // reclaim the current process, and reschedule. added @lab3_1
   free_process( current );
   schedule();
@@ -229,12 +231,18 @@ ssize_t sys_user_unlink(char * vfn){
 //
 // implement the SYS_user_exec syscall
 //
-ssize_t sys_user_exec(char *pathname) {
+ssize_t sys_user_exec(char *pathname, char *argv) {
   // pathname 是用户空间地址，需要转换为物理地址
-  char *pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathname);
+  char *pa_pathname = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathname);
+  
+  // argv 也需要转换（如果不为空）
+  char *pa_argv = NULL;
+  if (argv != NULL) {
+    pa_argv = (char*)user_va_to_pa((pagetable_t)(current->pagetable), argv);
+  }
   
   // 调用内核辅助函数执行 exec
-  return do_exec(current, pa);
+  return do_exec(current, pa_pathname, pa_argv);
 }
 
 //
@@ -287,7 +295,7 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_unlink((char *)a1);
     // added @lab4_challenge2
     case SYS_user_exec:
-      return sys_user_exec((char *)a1);
+      return sys_user_exec((char *)a1, (char *)a2);
     default:
       panic("Unknown syscall %ld \n", a0);
   }

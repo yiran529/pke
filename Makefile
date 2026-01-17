@@ -64,26 +64,17 @@ SPIKE_INF_LIB   := $(OBJ_DIR)/spike_interface.a
 
 
 #---------------------	user   -----------------------
-<<<<<<< HEAD
 USER_CPPS 		:= user/app_shell.c user/user_lib.c
 
 USER_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_CPPS)))
 
 USER_TARGET 	:= $(HOSTFS_ROOT)/bin/app_shell
-=======
-USER_CPPS 		:= user/app_exec.c user/user_lib.c
-
-USER_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_CPPS)))
-
-USER_TARGET 	:= $(HOSTFS_ROOT)/bin/app_exec
->>>>>>> lab4_challenge2_exec
 
 USER_E_CPPS 		:= user/app_ls.c user/user_lib.c
 
 USER_E_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_E_CPPS)))
 
 USER_E_TARGET 	:= $(HOSTFS_ROOT)/bin/app_ls
-<<<<<<< HEAD
 
 USER_M_CPPS 		:= user/app_mkdir.c user/user_lib.c
 
@@ -108,8 +99,6 @@ USER_O_CPPS 		:= user/app_echo.c user/user_lib.c
 USER_O_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_O_CPPS)))
 
 USER_O_TARGET 	:= $(HOSTFS_ROOT)/bin/app_echo
-=======
->>>>>>> lab4_challenge2_exec
 #------------------------targets------------------------
 $(OBJ_DIR):
 	@-mkdir -p $(OBJ_DIR)	
@@ -118,15 +107,11 @@ $(OBJ_DIR):
 	@-mkdir -p $(dir $(KERNEL_OBJS))
 	@-mkdir -p $(dir $(USER_OBJS))
 	@-mkdir -p $(dir $(USER_E_OBJS))
-<<<<<<< HEAD
 	@-mkdir -p $(dir $(USER_M_OBJS))
 	@-mkdir -p $(dir $(USER_T_OBJS))
 	@-mkdir -p $(dir $(USER_C_OBJS))
 	@-mkdir -p $(dir $(USER_O_OBJS))
 	
-=======
-
->>>>>>> lab4_challenge2_exec
 $(OBJ_DIR)/%.o : %.c
 	@echo "compiling" $<
 	@$(COMPILE) -c $< -o $@
@@ -162,7 +147,6 @@ $(USER_E_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_E_OBJS)
 	-@mkdir -p $(HOSTFS_ROOT)/bin
 	@$(COMPILE) --entry=main $(USER_E_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
-<<<<<<< HEAD
 
 $(USER_M_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_M_OBJS)
 	@echo "linking" $@	...	
@@ -187,29 +171,18 @@ $(USER_O_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_O_OBJS)
 	-@mkdir -p $(HOSTFS_ROOT)/bin
 	@$(COMPILE) --entry=main $(USER_O_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
-=======
->>>>>>> lab4_challenge2_exec
 
 -include $(wildcard $(OBJ_DIR)/*/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*/*.d)
 
 .DEFAULT_GOAL := $(all)
 
-<<<<<<< HEAD
 all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET)
 .PHONY:all
 
 run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET)
 	@echo "********************HUST PKE********************"
 	spike $(KERNEL_TARGET) /bin/app_shell
-=======
-all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET)
-.PHONY:all
-
-run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET)
-	@echo "********************HUST PKE********************"
-	spike $(KERNEL_TARGET) /bin/app_exec
->>>>>>> lab4_challenge2_exec
 
 # need openocd!
 gdb:$(KERNEL_TARGET) $(USER_TARGET)

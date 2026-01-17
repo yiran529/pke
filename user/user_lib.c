@@ -170,6 +170,10 @@ int close(int fd) {
   return do_user_call(SYS_user_close, fd, 0, 0, 0, 0, 0, 0);
 }
 
-int exec(const char *pathname) {
-  return do_user_call(SYS_user_exec, (uint64)pathname, 0, 0, 0, 0, 0, 0);
+int exec(const char *pathname, char* argv) {
+  return do_user_call(SYS_user_exec, (uint64)pathname, (uint64)argv, 0, 0, 0, 0, 0);
+}
+
+int wait(int pid) {
+  return do_user_call(SYS_user_wait, (uint64)pid, 0, 0, 0, 0, 0, 0);
 }

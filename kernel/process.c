@@ -333,6 +333,10 @@ int do_fork( process* parent)
     }
   }
 
+  sprint("do_fork map code segment at pa:%lx of parent %d to child %d at va:0x%lx.\n",
+    lookup_pa(parent->pagetable, parent->mapped_info[CODE_SEGMENT].va),
+    parent->pid, child->pid, parent->mapped_info[CODE_SEGMENT].va );
+
   child->status = READY;
   child->trapframe->regs.a0 = 0;
   child->parent = parent;
@@ -341,7 +345,7 @@ int do_fork( process* parent)
   return child->pid;
 }
 
-int do_exec( process* proc, char* pathname ) {
+int do_exec( process* proc, char* pathname, char* argv ) {
   sprint( "will exec a new program %s in process %d.\n", pathname, proc->pid );
   
   pagetable_t old_pagetable = proc->pagetable;
@@ -353,8 +357,71 @@ int do_exec( process* proc, char* pathname ) {
   refresh_process( proc );
   load_bincode_from_host_elf_for_exec(proc, pathname);
 
-  // 释放旧的页表和堆页面 /// 为了调试暂时注释掉
+  // 设置命令行参数
+  // 栈布局（从高地址到低地址）：
+  // | argv[1] 字符串内容 (如果有) |
+  // | argv[0] 字符串内容 (程序名) |
+  // | NULL (argv数组结束标记)    |
+  // | argv[1] 指针 (如果有)       |
+  // | argv[0] 指针               | <- argv 指向这里
+  
+  uint64 sp = USER_STACK_TOP;
+  int argc;
+  uint64 argv_base = 0;
+  
+  // 计算参数个数
+  if (argv != NULL && argv[0] != '\0') {
+    argc = 2;  // 程序名 + 1个参数
+  } else {
+    argc = 1;  // 只有程序名
+  }
+  
+  // 保存字符串在栈上的地址
+  uint64 arg_addrs[2];
+  
+  // 在栈上放置字符串（从高地址向低地址）
+  if (argc == 2) {
+    // 放置 argv[1] (实际参数)
+    int arg_len = strlen(argv) + 1;  // 包含 '\0'
+    sp -= arg_len;
+    sp &= ~0x7;  // 8字节对齐
+    arg_addrs[1] = sp;
+    // 将参数字符串复制到用户栈
+    char* dest = (char*)user_va_to_pa(proc->pagetable, (void*)sp);
+    strcpy(dest, argv);
+  }
+  
+  // 放置 argv[0] (程序名)
+  int pathname_len = strlen(pathname) + 1;
+  sp -= pathname_len;
+  sp &= ~0x7;  // 8字节对齐
+  arg_addrs[0] = sp;
+  char* dest0 = (char*)user_va_to_pa(proc->pagetable, (void*)sp);
+  strcpy(dest0, pathname);
+  
+  // 放置 argv 指针数组
+  sp -= sizeof(uint64);  // NULL 终止符
+  uint64* null_ptr = (uint64*)user_va_to_pa(proc->pagetable, (void*)sp);
+  *null_ptr = 0;
+  
+  // 放置参数指针
+  for (int i = argc - 1; i >= 0; i--) {
+    sp -= sizeof(uint64);
+    uint64* argv_ptr = (uint64*)user_va_to_pa(proc->pagetable, (void*)sp);
+    *argv_ptr = arg_addrs[i];
+  }
+  
+  argv_base = sp;  // argv 数组的起始地址
+  
+  // 对齐栈指针到 16 字节（RISC-V ABI 要求）
+  sp &= ~0xf;
+  
+  // 设置寄存器
+  proc->trapframe->regs.a0 = argc;       // 第一个参数：argc
+  proc->trapframe->regs.a1 = argv_base;  // 第二个参数：argv
+  proc->trapframe->regs.sp = sp;         // 更新栈指针
 
+  // 释放旧的页表和堆页面
   int free_block_filter[MAX_HEAP_PAGES]; /// 标记哪些堆页是被释放的数组
   memset(free_block_filter, 0, MAX_HEAP_PAGES);
   uint64 heap_bottom = old_heap.heap_bottom;
@@ -377,7 +444,7 @@ int do_exec( process* proc, char* pathname ) {
   }
   // free old pagetable
   free_page( (void*)old_pagetable );
-  sprint("Exec completed for process %d.\n", proc->pid );
+  sprint("Exec completed for process %d with argc=%d.\n", proc->pid, argc);
   
   return 0;
 }
