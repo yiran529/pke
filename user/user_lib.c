@@ -10,17 +10,19 @@
 #include "util/snprintf.h"
 #include "kernel/syscall.h"
 
-uint64 do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
+// a wrapper for making system calls from user space to the kernel in the RISC-V environment
+int do_user_call(uint64 sysnum, uint64 a1, uint64 a2, uint64 a3, uint64 a4, uint64 a5, uint64 a6,
                  uint64 a7) {
   int ret;
 
   // before invoking the syscall, arguments of do_user_call are already loaded into the argument
   // registers (a0-a7) of our (emulated) risc-v machine.
+  /// This happens automatically due to the calling convention - the compiler generates code that places these values in the appropriate registers before calling the function.
   asm volatile(
-      "ecall\n"
-      "sw a0, %0"  // returns a 32-bit value
-      : "=m"(ret)
-      :
+      "ecall\n" // transfer control to the kernel /// The specific syscall is determined by the value in a0
+      "sw a0, %0"  // returns a 32-bit value /// %0 refers to the output operand 'ret'
+      : "=m"(ret) /// write-only output operand, and ret is the variable to receive the value from a0
+      :           /// No additional input operands
       : "memory");
 
   return ret;
@@ -54,7 +56,7 @@ int exit(int code) {
 // lib call to naive_malloc
 //
 void* naive_malloc() {
-  return (void*)do_user_call(SYS_user_allocate_page, 0, 0, 0, 0, 0, 0, 0);
+  return (void*)(uint64)do_user_call(SYS_user_allocate_page, 0, 0, 0, 0, 0, 0, 0); // ?? (uint64)是自己加的
 }
 
 //
@@ -166,4 +168,8 @@ int unlink_u(const char *fn){
 //
 int close(int fd) {
   return do_user_call(SYS_user_close, fd, 0, 0, 0, 0, 0, 0);
+}
+
+int exec(const char *pathname) {
+  return do_user_call(SYS_user_exec, (uint64)pathname, 0, 0, 0, 0, 0, 0);
 }

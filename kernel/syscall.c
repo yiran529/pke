@@ -24,8 +24,19 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   // buf is now an address in user space of the given app's user stack,
   // so we have to transfer it into phisical address (kernel is running in direct mapping).
   assert( current );
+  
+  // sprint("\n=== KERNEL MODE: Manual Translation Required ===\n");
+  // sprint("buf (user VA): 0x%lx\n", (uint64)buf);
+  // sprint("Current satp:  0x%lx (points to KERNEL page table)\n", read_csr(satp));
+  // sprint("User pagetable: 0x%lx\n", (uint64)current->pagetable);
+  // sprint("Why manual? satp != user_pagetable, so MMU can't auto-translate buf!\n");
+  // sprint("Calling user_va_to_pa() to manually walk user page table...\n");
+  
   char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
   sprint(pa);
+  // sprint("Translated PA: 0x%lx\n", (uint64)pa);
+  // sprint("Message: %s", pa);
+  // sprint("===========================================\n\n");
   return 0;
 }
 
@@ -90,8 +101,10 @@ ssize_t sys_user_yield() {
   // hint: the functionality of yield is to give up the processor. therefore,
   // we should set the status of currently running process to READY, insert it in
   // the rear of ready queue, and finally, schedule a READY process to run.
-  panic( "You need to implement the yield syscall in lab3_2.\n" );
-
+  // panic( "You need to implement the yield syscall in lab3_2.\n" );
+  current->status = READY;
+  insert_to_ready_queue(current);
+  schedule();
   return 0;
 }
 
@@ -214,6 +227,17 @@ ssize_t sys_user_unlink(char * vfn){
 }
 
 //
+// implement the SYS_user_exec syscall
+//
+ssize_t sys_user_exec(char *pathname) {
+  // pathname 是用户空间地址，需要转换为物理地址
+  char *pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathname);
+  
+  // 调用内核辅助函数执行 exec
+  return do_exec(current, pa);
+}
+
+//
 // [a0]: the syscall number; [a1] ... [a7]: arguments to the syscalls.
 // returns the code of success, (e.g., 0 means success, fail for otherwise)
 //
@@ -261,6 +285,9 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_link((char *)a1, (char *)a2);
     case SYS_user_unlink:
       return sys_user_unlink((char *)a1);
+    // added @lab4_challenge2
+    case SYS_user_exec:
+      return sys_user_exec((char *)a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }
