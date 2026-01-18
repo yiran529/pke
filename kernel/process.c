@@ -396,6 +396,7 @@ int do_exec( process* proc, char* pathname, char* argv ) {
   // | argv[0] 字符串内容 (如果有) |
   // | NULL (argv数组结束标记)    |
   // | argv[0] 指针 (如果有)       | <- argv 指向这里
+  // （注意这里比较特殊的是：参数字符串本身也被放在了栈中）
   
   uint64 sp = USER_STACK_TOP;
   int argc;
