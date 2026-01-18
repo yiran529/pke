@@ -473,6 +473,8 @@ int vfs_mkdir(const char *path) {
   new_dir_inode->ref++;
   hash_put_dentry(new_dentry);
   hash_put_vinode(new_dir_inode);
+
+  sprint("------vfs_mkdir inum: %d, path: %s\n", new_dir_inode->inum, path);
   return 0;
 }
 

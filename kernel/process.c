@@ -216,7 +216,7 @@ void refresh_process(process* proc) {
   // initialize files_struct
   // proc->pfiles = init_proc_file_management();
   // we might not need to re-initialize proc_file_management here
-  sprint("Successfully refresh process %d.\n", proc->pid);
+  // sprint("Successfully refresh process %d.\n", proc->pid);
 
 }
 
@@ -330,6 +330,24 @@ int do_fork( process* parent)
         child->total_mapped_region++;
         break;
       }
+      case DATA_SEGMENT: {
+        uint64 va_start = parent->mapped_info[i].va;
+        int npages = parent->mapped_info[i].npages;
+        for (int p = 0; p < npages; p++) {
+          uint64 va = va_start + p * PGSIZE;
+          void* child_pa = alloc_page();
+          memcpy(child_pa, (void*)lookup_pa(parent->pagetable, va), PGSIZE);
+          user_vm_map(child->pagetable, va, PGSIZE, (uint64)child_pa,
+                      prot_to_type(PROT_WRITE | PROT_READ, 1));
+        }
+
+        child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
+        child->mapped_info[child->total_mapped_region].npages =
+          parent->mapped_info[i].npages;
+        child->mapped_info[child->total_mapped_region].seg_type = DATA_SEGMENT;
+        child->total_mapped_region++;
+        break;
+      }
     }
   }
 
@@ -347,28 +365,82 @@ int do_fork( process* parent)
 
 int do_exec( process* proc, char* pathname, char* argv ) {
   sprint( "will exec a new program %s in process %d.\n", pathname, proc->pid );
+
+  /*
+   * -----------------------------------------------------------------
+   * 保存旧进程的堆信息，以便后续释放旧堆页面时使用
+   * -----------------------------------------------------------------
+   */
   
   pagetable_t old_pagetable = proc->pagetable;
   process_heap_manager old_heap = proc->user_heap;
-  mapped_region old_mapped_info[MAX_MAPPED_REGION];
+  mapped_region old_mapped_info[MAX_MAPPED_REGION]; 
   int old_total_mapped_region = proc->total_mapped_region;
   memcpy( old_mapped_info, proc->mapped_info, sizeof(mapped_region)*old_total_mapped_region );
 
+  /*
+   * -----------------------------------------------------------------
+   * 刷新进程结构，加载新的 ELF 程序
+   * -----------------------------------------------------------------
+   */
   refresh_process( proc );
   load_bincode_from_host_elf_for_exec(proc, pathname);
 
+  /*
+   * -----------------------------------------------------------------
+   * 设置新的命令行参数到用户栈
+   * -----------------------------------------------------------------
+   */
   // 设置命令行参数
   // 栈布局（从高地址到低地址）：
-  // | argv[1] 字符串内容 (如果有) |
-  // | argv[0] 字符串内容 (程序名) |
+  // | argv[0] 字符串内容 (如果有) |
   // | NULL (argv数组结束标记)    |
-  // | argv[1] 指针 (如果有)       |
-  // | argv[0] 指针               | <- argv 指向这里
+  // | argv[0] 指针 (如果有)       | <- argv 指向这里
   
   uint64 sp = USER_STACK_TOP;
   int argc;
   uint64 argv_base = 0;
   
+  // 计算参数个数（只传递一个字符串参数，不传递程序名）
+  if (argv != NULL && argv[0] != '\0') {
+    argc = 1;  // 只有1个参数
+  } else {
+    argc = 0;  // 没有参数
+  }
+  
+  // 在栈上放置字符串（从高地址向低地址）
+  if (argc == 1) {
+    // 放置 argv[0] (唯一的参数)
+    int arg_len = strlen(argv) + 1;  // 包含 '\0'
+    sp -= arg_len;
+    sp &= ~0x7;  // 8字节对齐
+    uint64 arg_addr = sp;
+    // 将参数字符串复制到用户栈
+    char* dest = (char*)user_va_to_pa(proc->pagetable, (void*)sp);
+    strcpy(dest, argv);
+    
+    // 放置 argv 指针数组
+    sp -= sizeof(uint64);  // NULL 终止符
+    uint64* null_ptr = (uint64*)user_va_to_pa(proc->pagetable, (void*)sp);
+    *null_ptr = 0;
+    
+    // 放置参数指针
+    sp -= sizeof(uint64);
+    uint64* argv_ptr = (uint64*)user_va_to_pa(proc->pagetable, (void*)sp);
+    *argv_ptr = arg_addr;
+    
+    argv_base = sp;  // argv 数组的起始地址
+  }
+  
+  // 对齐栈指针到 16 字节（RISC-V ABI 要求）
+  sp &= ~0xf;
+  
+  // 设置寄存器
+  proc->trapframe->regs.a0 = argc;       // 第一个参数：argc
+  proc->trapframe->regs.a1 = argv_base;  // 第二个参数：argv
+  proc->trapframe->regs.sp = sp;         // 更新栈指针
+
+  /* 原代码（包含程序名的版本）：
   // 计算参数个数
   if (argv != NULL && argv[0] != '\0') {
     argc = 2;  // 程序名 + 1个参数
@@ -412,16 +484,13 @@ int do_exec( process* proc, char* pathname, char* argv ) {
   }
   
   argv_base = sp;  // argv 数组的起始地址
-  
-  // 对齐栈指针到 16 字节（RISC-V ABI 要求）
-  sp &= ~0xf;
-  
-  // 设置寄存器
-  proc->trapframe->regs.a0 = argc;       // 第一个参数：argc
-  proc->trapframe->regs.a1 = argv_base;  // 第二个参数：argv
-  proc->trapframe->regs.sp = sp;         // 更新栈指针
+  */
 
-  // 释放旧的页表和堆页面
+  /*
+   * -----------------------------------------------------------------
+   * 释放旧进程的堆页面和页表
+   * -----------------------------------------------------------------
+   */
   int free_block_filter[MAX_HEAP_PAGES]; /// 标记哪些堆页是被释放的数组
   memset(free_block_filter, 0, MAX_HEAP_PAGES);
   uint64 heap_bottom = old_heap.heap_bottom;
@@ -444,7 +513,67 @@ int do_exec( process* proc, char* pathname, char* argv ) {
   }
   // free old pagetable
   free_page( (void*)old_pagetable );
-  sprint("Exec completed for process %d with argc=%d.\n", proc->pid, argc);
+  // sprint("Exec completed for process %d with argc=%d.\n", proc->pid, argc);
   
   return 0;
+}
+
+int do_wait(int pid) {
+  // sprint("[DEBUG] Entered do_wait\n");
+  // pid不合法
+  if(pid < -1 || pid == 0) return -1;
+
+  // 等待特定pid的进程
+  if(pid > 0) {
+    for(int i = 0; i < NPROC; i++) {
+      process* p = &procs[i];
+
+      if(!p->parent) continue;
+      if(p->parent->pid != current->pid && p->pid == pid) {
+        return -1;
+      }
+      if(p->parent->pid == current->pid && p->pid == pid) {
+        if (p->status != ZOMBIE) {
+          current->status = BLOCKED;
+          schedule();
+        }
+        assert(p->status == ZOMBIE);
+        // user_vm_unmap(p.pagetable, ) ???
+        // current->status = BLOCKED; ???
+        // p->status = FREE;
+        return p->pid;
+      }
+    }
+  }
+
+  // 等待任意一个子进程
+  if(pid == -1) {
+    // sprint("[DEBUG] loop to find a ZOMBIE children process\n");
+    int has_children = 0;
+
+    while(1) {
+      for(int i = 0; i < NPROC; i++) {
+        // sprint("[DEBUG] Check if procs[%d] satisfies\n", i);
+        process *p = &procs[i];
+        if(!p->parent) continue;
+        if(p->parent->pid == current->pid) {
+          has_children = 1;
+        }
+        if(p->parent->pid == current->pid && p->status == ZOMBIE) {
+          // user_vm_unmap(p.pagetable, ) ???
+          // current->status = BLOCKED; ???
+          // p->status = FREE;
+          return p->pid;
+        }
+      }
+      current->status=BLOCKED;
+      schedule();
+    }
+
+    if(!has_children) {
+      return -1;
+    }
+  }
+
+  return -1;
 }
