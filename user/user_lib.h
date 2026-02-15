@@ -14,6 +14,11 @@ void naive_free(void* va);
 int fork();
 void yield();
 
+// added @ lab3_challenge2
+int sem_new(int count);
+void sem_P(int sem);
+void sem_V(int sem);
+
 // added @ lab4_1
 int open(const char *pathname, int flags);
 int read_u(int fd, void *buf, uint64 count);

@@ -110,6 +110,100 @@ ssize_t sys_user_yield() {
   return 0;
 }
 
+
+// added @ lab3_challenge2
+/* semaphore data structures and operations */
+typedef int semaphore_t;
+semaphore_t semaphores[ MAX_SEMAPHORES ]; // -1 indicates unused semaphore
+int first_use = 0;
+process* queue[ MAX_SEMAPHORES ][ 10 ]; // 每个信号量对应的阻塞队列
+int queue_lengths[ MAX_SEMAPHORES ] = {0}; // 每个信号量对应的阻塞队列长度
+
+ssize_t sys_user_sem_new(int count) {
+   if(first_use == 0) {
+       for(int i = 0; i < MAX_SEMAPHORES; i++) {
+           semaphores[i] = -1; // -1 indicates unused semaphore
+       }
+       first_use = 1;
+   }
+  for(int i = 0; i < MAX_SEMAPHORES; i++) {
+      if(semaphores[i] == -1) {
+          semaphores[i] = count;
+          return i; // return semaphore id
+      }
+  }
+  return -1; // no available semaphore
+}
+
+int sys_user_sem_P(int sem) {
+    if(sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
+        return -1; // invalid semaphore
+    }
+
+    // sprint("[DEBUG] P operation on semaphore %d, val = %d\n", sem, semaphores[sem]);
+    while(1) {
+      if(semaphores[sem] > 0) {
+        semaphores[sem]--;
+        return 1;
+      } else {
+        // sprint("[DEBUG] Semaphore %d is not available, blocking current process %d\n", sem, current->pid);
+        // insert into semaphore's blocked queue
+        // block the current process
+        current -> status = BLOCKED;
+
+        // make sure the process is not already in the blocked queue
+        int unique = 1;
+        for(int i = 0; i < queue_lengths[sem]; i++) {
+          if (queue[sem][i] == current) {            
+            unique = 0;
+          }
+        }
+
+        if (unique) {
+          queue[sem][queue_lengths[sem]++] = current; 
+        }
+
+        current->trapframe->epc -= 4; // 让被阻塞的进程在恢复时重新执行P操作
+        schedule();
+      }
+    }
+    
+    return 0;
+}
+
+int sys_user_sem_V(int sem) {
+    if(sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
+        return -1; // invalid semaphore
+    }
+
+    // sprint("[DEBUG] V operation on semaphore %d, val = %d\n", sem, semaphores[sem]);
+    semaphores[sem]++;
+    // unblock a process from semaphore's blocked queue
+
+    if(queue_lengths[sem] == 0) {
+        return 1; // no process to wake up
+    }
+
+    process* process_to_wake = queue[sem][0];
+    if (process_to_wake == NULL) {
+        return 1; 
+    }
+
+    // sprint("[DEBUG] Waking up process %d from semaphore %d's blocked queue\n", process_to_wake->pid, sem);
+    // shift the queue //TODO 可以考虑使用循环队列稍微提升性能
+    for(int i = 1; i < queue_lengths[sem]; i++) {
+        queue[sem][i - 1] = queue[sem][i];
+    }
+    queue_lengths[sem]--;
+    // sprint("[DEBUG] Semaphore %d blocked queue length: %d\n", sem, queue_lengths[sem]);
+    // find the process and set it to READY
+    insert_to_ready_queue(process_to_wake);
+    return 1;
+}
+
+///////////////////////////////////////////////
+
+
 //
 // open file
 //
@@ -282,6 +376,13 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_fork();
     case SYS_user_yield:
       return sys_user_yield();
+    // added @lab3_challenge2
+    case SYS_user_sem_new:
+      return sys_user_sem_new(a1);
+    case SYS_user_sem_P:
+      return sys_user_sem_P(a1);
+    case SYS_user_sem_V:
+      return sys_user_sem_V(a1);
     // added @lab4_1
     case SYS_user_open:
       return sys_user_open((char *)a1, a2);

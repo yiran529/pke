@@ -6,4 +6,5 @@
 /bin/app_ls /RAMDISK0/sub_dir
 /bin/app_ls /RAMDISK0
 /bin/app_relativepath xxx
+/bin/app_semaphore xxx
 END END
