@@ -43,6 +43,23 @@ enum segment_type {
   DATA_SEGMENT,    // ELF segment
 };
 
+// added @lab2_challenge1
+/* Below are macro, data structures, or functions for better_malloc or better_free */
+#define CHUNK_ALIGN 16
+#define CHUNK_HDR_SIZE 16
+#define CHUNK_MIN_SIZE (CHUNK_HDR_SIZE + CHUNK_ALIGN)
+#define CHUNK_IS_FREE(c) ((c)->flags == 0)
+#define ALIGN_UP(size, align) (((size) + (align)-1) & ~((align)-1))
+
+typedef struct heap_chunk {
+  uint32 size; // 含头部的总字节数
+  uint32 prev_size; // 上一块总字节数，便于 O(1) 向前合并
+  uint8 flags; // 0-free 1-used
+  char reserverd[7]; // 对齐填充
+}heap_chunk_t; // total: 16 bytes
+
+////////////////////////////
+
 #define MAX_MAPPED_REGION DATA_SEGMENT + 1
 
 // the VM regions mapped to a user process
@@ -72,6 +89,12 @@ typedef struct process_t {
   pagetable_t pagetable;
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
+
+  // added @lab2_2: for better_malloc
+  // heap base pa 
+  uint64 heap_pa;
+  // heap base va
+  uint64 heap_va; 
 
   // added @lab2_challenge1
   uint64 user_st_top;

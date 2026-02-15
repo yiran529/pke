@@ -14,6 +14,10 @@ void naive_free(void* va);
 int fork();
 void yield();
 
+// added @lab2_challenge2
+void* better_malloc(int n);
+void better_free(void* va);
+
 // added @ lab3_challenge2
 int sem_new(int count);
 void sem_P(int sem);

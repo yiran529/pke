@@ -42,6 +42,9 @@
 #define SYS_user_sem_V (SYS_user_base + 36)
 // added @lab3_challenge3
 #define SYS_user_printpa (SYS_user_base + 37)
+// added @lab2_challenge2
+#define SYS_user_allocate_for_better_malloc (SYS_user_base + 38)
+#define SYS_user_free_for_better_free (SYS_user_base + 39)
 
 #define MAX_SEMAPHORES 32
 

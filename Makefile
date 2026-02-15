@@ -123,6 +123,12 @@ USER_O_CPPS 		:= user/app_sum_sequence.c user/user_lib.c
 USER_O_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_O_CPPS)))
 
 USER_O_TARGET 	:= $(HOSTFS_ROOT)/bin/app_sum_sequence
+
+USER_O_CPPS 		:= user/app_singlepageheap.c user/user_lib.c
+
+USER_O_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_O_CPPS)))
+
+USER_O_TARGET 	:= $(HOSTFS_ROOT)/bin/app_singlepageheap
 #------------------------targets------------------------
 $(OBJ_DIR):
 	@-mkdir -p $(OBJ_DIR)	

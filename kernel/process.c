@@ -158,6 +158,17 @@ process* alloc_process() {
 
   procs[i].user_st_top = USER_STACK_TOP;
 
+  // added @lab2_challenge2: initialize the heap with one big free chunk.
+  procs[i].heap_pa = (uint64)alloc_page();
+  memset((void *)procs[i].heap_pa, 0, PGSIZE);
+  heap_chunk_t init_chunk = {
+       .size = PGSIZE,
+       .prev_size = 0,
+       .flags = 0,
+  };
+  memcpy((void *)procs[i].heap_pa, &init_chunk, sizeof(heap_chunk_t));
+  procs[i].heap_va = USER_FREE_ADDRESS_START;
+
   // initialize files_struct
   procs[i].pfiles = init_proc_file_management();
   sprint("in alloc_proc. build proc_file_management successfully.\n");
