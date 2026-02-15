@@ -156,6 +156,8 @@ process* alloc_process() {
 
   procs[i].total_mapped_region = 4;
 
+  procs[i].user_st_top = USER_STACK_TOP;
+
   // initialize files_struct
   procs[i].pfiles = init_proc_file_management();
   sprint("in alloc_proc. build proc_file_management successfully.\n");

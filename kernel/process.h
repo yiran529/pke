@@ -73,6 +73,9 @@ typedef struct process_t {
   // trapframe storing the context of a (User mode) process.
   trapframe* trapframe;
 
+  // added @lab2_challenge1
+  uint64 user_st_top;
+
   // points to a page that contains mapped_regions. below are added @lab3_1
   mapped_region *mapped_info;
   // next free mapped region in mapped_info

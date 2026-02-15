@@ -84,10 +84,16 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
         break;
       }
 
+      if (stval < current->user_st_top - PGSIZE - 8 || stval >= current->user_st_top) {
+        panic("this address is not available!");
+      } 
+
       void *pa = alloc_page();
       user_vm_map((pagetable_t)(current->pagetable),
                 ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa,
                 prot_to_type(PROT_WRITE | PROT_READ, 1));
+      
+      current -> user_st_top -= PGSIZE;
       break;
     }
     default:

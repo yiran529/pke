@@ -8,4 +8,5 @@
 /bin/app_relativepath xxx
 /bin/app_semaphore xxx
 /bin/app_cow xxx
+/bin/app_sum_sequence xxx
 END END
