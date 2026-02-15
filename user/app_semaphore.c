@@ -18,14 +18,14 @@ int main(void) {
             printu("Child%d print %d\n", pid == 0, i);
             if (pid != 0) sem_V(child_sem[1]); else sem_V(main_sem);
         }
-        if (pid != 0) wait(pid);  // C1 等待 C2 退出
+        if (pid != 0) wait(pid);  // C1 等待 C2 退出 
     } else {
         for (int i = 0; i < 10; i++) {
             sem_P(main_sem);
             printu("Parent print %d\n", i);
             sem_V(child_sem[0]);
         }
-        wait(pid);  // P 等待 C1 退出（C1 会先等 C2）
+        wait(pid);  // P 等待 C1 退出（C1 会先等 C2） // 不加这个可能会导致 P 先退出，C1 和 C2 还在运行，接着就可能导致程序直接结束
     }
     exit(0);
     return 0;

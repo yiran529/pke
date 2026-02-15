@@ -203,6 +203,15 @@ int sys_user_sem_V(int sem) {
 
 ///////////////////////////////////////////////
 
+// added @lab3_challenge3
+ssize_t sys_user_printpa(uint64 va)
+{
+  uint64 pa = (uint64)user_va_to_pa((pagetable_t)(current->pagetable), (void*)va);
+  sprint("%lx\n", pa);
+  return 0;
+}
+
+///////////////////////////////////////////////
 
 //
 // open file
@@ -383,6 +392,9 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_sem_P(a1);
     case SYS_user_sem_V:
       return sys_user_sem_V(a1);
+    // added @lab3_challenge3
+    case SYS_user_printpa:
+      return sys_user_printpa(a1);
     // added @lab4_1
     case SYS_user_open:
       return sys_user_open((char *)a1, a2);

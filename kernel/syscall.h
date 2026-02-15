@@ -40,6 +40,8 @@
 #define SYS_user_sem_new (SYS_user_base + 34)
 #define SYS_user_sem_P (SYS_user_base + 35)
 #define SYS_user_sem_V (SYS_user_base + 36)
+// added @lab3_challenge3
+#define SYS_user_printpa (SYS_user_base + 37)
 
 #define MAX_SEMAPHORES 32
 

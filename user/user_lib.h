@@ -19,6 +19,9 @@ int sem_new(int count);
 void sem_P(int sem);
 void sem_V(int sem);
 
+// added @lab3_challenge3
+void printpa(int* va);
+
 // added @ lab4_1
 int open(const char *pathname, int flags);
 int read_u(int fd, void *buf, uint64 count);

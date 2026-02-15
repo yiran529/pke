@@ -7,4 +7,5 @@
 /bin/app_ls /RAMDISK0
 /bin/app_relativepath xxx
 /bin/app_semaphore xxx
+/bin/app_cow xxx
 END END

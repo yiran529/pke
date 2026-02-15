@@ -211,7 +211,7 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
     return;
   }
 
-  if(free){
+  if(free && get_page_refcount(PTE2PA(*pte)) > 1) {
     void* pa = (void*)PTE2PA(*pte);
     // 释放物理页
     free_page(pa);
