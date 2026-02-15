@@ -57,10 +57,13 @@ ssize_t sys_user_exit(uint64 code) {
 /* Below are functions for lab2_challenge2 */
 uint64 find_first_fit(process *p, uint64 size) {
   uint64 va = p->heap_va;
+  sprint("[DEBUG] Finding first fit for size %d in simple heap starting at va 0x%lx\n", size, p->heap_va);
   uint64 heap_limit = p->heap_va + PGSIZE; // 简单堆当前仅一页
   while (va + CHUNK_HDR_SIZE <= heap_limit) {
     // VA -> PA 再访问
     heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)va);
+    sprint("[DEBUG] p: 0x%lx, pagetable: 0x%lx\n", (uint64)p, (uint64)p->pagetable);
+    sprint("[DEBUG] Checking chunk at va 0x%lx(pa: 0x%lx): size %d, flags %d\n", va, (uint64)hdr, hdr ? hdr->size : 0, hdr ? hdr->flags : 0);
     if (!hdr) break; // 未映射，异常
     if (CHUNK_IS_FREE(hdr) && hdr->size - CHUNK_HDR_SIZE >= ALIGN_UP(size, CHUNK_ALIGN) ) { // free 且足够大
       hdr->flags = 1; // 标记为 used

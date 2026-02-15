@@ -68,8 +68,7 @@ void naive_free(void* va) {
 
 // added @lab2_challenge2
 void* better_malloc(int n) {
-  return 0;
-  // return (void*)do_user_call(SYS_user_allocate_for_better_malloc, n, 0, 0, 0, 0, 0, 0);
+  return (void*)do_user_call(SYS_user_allocate_for_better_malloc, n, 0, 0, 0, 0, 0, 0);
 }
 void better_free(void* va) {
   do_user_call(SYS_user_free_for_better_free, (uint64)va, 0, 0, 0, 0, 0, 0);
