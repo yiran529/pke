@@ -14,7 +14,112 @@
 #include "spike_interface/spike_utils.h"
 #include "util/functions.h"
 #include "util/string.h"
+#include "vmm.h"
 
+// ***************** helpers for path resolution *****************
+
+// 从dentry构建绝对路径
+// 通过遍历parent链从根到当前目录构建完整路径
+int build_absolute_path_from_dentry(struct dentry* d, char* path) {
+  char temp[MAX_PATH_LEN];
+  int pos = MAX_PATH_LEN - 1;
+  temp[pos] = '\0';
+  
+  // Special case: if d is root
+  if (d->parent == NULL || d->parent == d) {
+    strcpy(path, "/");
+    return 0;
+  }
+  
+  // Traverse from d to root, building path backwards
+  while (d->parent != NULL && d->parent != d) {
+    int name_len = strlen(d->name);
+    pos -= name_len;
+    if (pos < 0) return -1; // path too long
+    memcpy(temp + pos, d->name, name_len);
+    
+    pos--;
+    if (pos < 0) return -1;
+    temp[pos] = '/';
+    
+    d = d->parent;
+  }
+  
+  // Copy the result
+  strcpy(path, temp + pos);
+  return 0;
+}
+
+// 处理路径中可能含有的.或者..的核心逻辑
+int normalize_path(char* path) {
+  char tokens[MAX_PATH_DEPTH][MAX_DENTRY_NAME_LEN];
+  int tokens_count = 0;
+
+  // collect dentry names
+  char* token = strtok(path, "/");
+  while(token != NULL) {
+    // sprint("[DEBUG] normalize_path: token: %s\n", token);
+    if(strcmp(token, ".") == 0) {
+      // skip through this situation
+    } else if(strcmp(token, "..") == 0) {
+      if(tokens_count > 0) {
+        tokens_count--;
+      } // else do nothing
+    } else if(token[0] == '\0') {
+      // skip throught this situation
+      // 处理“//”这样的情况，虽然这种路径是错的，但这里暂时不实现异常处理
+    } else {
+      strcpy(tokens[tokens_count++], token);
+    }
+    token = strtok(NULL, "/");
+  }
+
+  // sprint("[DEBUG] normalize_path: tokens_count: %d\n", tokens_count);
+
+  // reconstruct the path
+  path[0] = '\0';
+  strcat(path, "/");
+  for (int i = 0; i < tokens_count; i++) {
+      strcat(path, tokens[i]);
+      if (i < tokens_count - 1) {
+          strcat(path, "/");
+      }
+  }
+
+  // boundaries? maybe
+  
+  return 0;
+}
+
+int resolve_path(char* path, char* res_path, struct dentry* cwd) {
+  if(path[0] == '/') {
+    // absolute path
+    strcpy(res_path, path);
+    return normalize_path(res_path);
+  } else {
+    // relative path: build full cwd path first, then append relative path
+    char cwd_path[MAX_PATH_LEN];
+    if (build_absolute_path_from_dentry(cwd, cwd_path) < 0) {
+      return -1;
+    }
+    
+    // Append relative path to cwd
+    int len = strlen(cwd_path);
+    if (cwd_path[len - 1] != '/') {
+      cwd_path[len] = '/';
+      cwd_path[len + 1] = '\0';
+    }
+    strcat(cwd_path, path);
+    strcpy(res_path, cwd_path);
+    
+    // sprint("[DEBUG] resolve_path: normalized path: %s\n", res_path);
+    return normalize_path(res_path);
+  }
+}
+
+
+
+// **************** main proc_file functions *****************
 //
 // initialize file system
 //
@@ -79,10 +184,12 @@ struct file *get_opened_file(int fd) {
 // open a file named as "pathname" with the permission of "flags".
 // return: -1 on failure; non-zero file-descriptor on success.
 //
-int do_open(char *pathname, int flags) {
-  struct file *opened_file = NULL;
-  if ((opened_file = vfs_open(pathname, flags)) == NULL) return -1;
+int do_open(char *pathname, int flags, struct dentry* cwd) {
+  char resolved_path[MAX_PATH_LEN];
+  resolve_path(pathname, resolved_path, cwd);  
 
+  struct file *opened_file = NULL;
+  if ((opened_file = vfs_open(resolved_path, flags)) == NULL) return -1;
   int fd = 0;
   if (current->pfiles->nfiles >= MAX_FILES) {
     panic("do_open: no file entry for current process!\n");
@@ -165,10 +272,12 @@ int do_close(int fd) {
 // open a directory
 // return: the fd of the directory file
 //
-int do_opendir(char *pathname) {
-  struct file *opened_file = NULL;
-  if ((opened_file = vfs_opendir(pathname)) == NULL) return -1;
+int do_opendir(char *pathname, struct dentry* cwd) {
+  char resolved_path[MAX_PATH_LEN];
+  resolve_path(pathname, resolved_path, cwd);
 
+  struct file *opened_file = NULL;
+  if ((opened_file = vfs_opendir(resolved_path)) == NULL) return -1;
   int fd = 0;
   struct file *pfile;
   for (fd = 0; fd < MAX_FILES; ++fd) {
@@ -220,4 +329,25 @@ int do_link(char *oldpath, char *newpath) {
 //
 int do_unlink(char *path) {
   return vfs_unlink(path);
+}
+
+int do_rcwd(char* path){
+  // Build full path from root by traversing parent chain
+  return build_absolute_path_from_dentry(current->pfiles->cwd, path);
+}
+
+int do_ccwd(char * path, struct dentry** cwd){
+  // sprint("[DEBUG] do_ccwd: changing cwd to %s\n", path);
+  char resolved_path[MAX_PATH_LEN];
+  resolve_path(path, resolved_path, *cwd);
+  // sprint("[DEBUG] do_ccwd: resolved path: %s\n", path);
+  struct dentry* start = vfs_root_dentry;
+  char miss[MAX_PATH_LEN];
+  struct dentry* d = lookup_final_dentry(resolved_path, &start, miss);
+  if(!d || d->dentry_inode->type != DIR_I) {
+    sprint("do_ccwd: cannot change cwd to a non-exist directory!\n");
+    return -1;
+  }
+  *cwd = d;
+  return 0;
 }

@@ -115,8 +115,9 @@ ssize_t sys_user_yield() {
 //
 ssize_t sys_user_open(char *pathva, int flags) {
   char* pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_open(pathpa, flags);
+  return do_open(pathpa, flags, current->pfiles->cwd);
 }
+
 
 //
 // read file
@@ -185,7 +186,7 @@ ssize_t sys_user_close(int fd) {
 //
 ssize_t sys_user_opendir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_opendir(pathpa);
+  return do_opendir(pathpa, current->pfiles->cwd);
 }
 
 //
@@ -228,8 +229,19 @@ ssize_t sys_user_unlink(char * vfn){
   return do_unlink(pfn);
 }
 
+// lib call to read / change current working directory @lab4_challenge1
+ssize_t sys_user_rcwd(char * pathva){
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
+  return do_rcwd(pathpa);
+}
+
+ssize_t sys_user_ccwd(char * pathva){
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
+  return do_ccwd(pathpa, &(current->pfiles->cwd));
+}
+
 //
-// implement the SYS_user_exec syscall
+// implement the SYS_user_exec syscall @lab4_challenge2
 //
 ssize_t sys_user_exec(char *pathname, char *argv) {
   // pathname 是用户空间地址，需要转换为物理地址
@@ -248,6 +260,8 @@ ssize_t sys_user_exec(char *pathname, char *argv) {
 ssize_t sys_user_wait(int pid) {
   return do_wait(pid);
 }
+
+
 
 //
 // [a0]: the syscall number; [a1] ... [a7]: arguments to the syscalls.
@@ -297,6 +311,11 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_link((char *)a1, (char *)a2);
     case SYS_user_unlink:
       return sys_user_unlink((char *)a1);
+    // added @lab4_challenge1
+    case SYS_user_ccwd:
+      return sys_user_ccwd((char *)a1);
+    case SYS_user_rcwd:
+      return sys_user_rcwd((char *)a1);
     // added @lab4_challenge2
     case SYS_user_exec:
       return sys_user_exec((char *)a1, (char *)a2);

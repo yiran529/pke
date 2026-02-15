@@ -13,6 +13,8 @@
 
 #define DIRECT_BLKNUM 10          // the number of direct blocks
 
+#define MAX_PATH_DEPTH 20         // 路径最大深度
+
 /**** vfs initialization function ****/
 int vfs_init();
 
