@@ -45,9 +45,11 @@ int main(int argc, char *argv[]) {
     else
     {
       wait(pid);
+      printu("[DEBUG] pid %d finished.\n", pid);
       printu("==========Command End============\n\n");
     }
   }
+  printu("\n[DEBUG] ======== Shell End ========\n\n");
   exit(0);
   return 0;
 }

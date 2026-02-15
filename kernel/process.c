@@ -520,7 +520,7 @@ int do_exec( process* proc, char* pathname, char* argv ) {
 }
 
 int do_wait(int pid) {
-  // sprint("[DEBUG] Entered do_wait\n");
+  sprint("[DEBUG] Entered do_wait %d\n", pid);
   // pid不合法
   if(pid < -1 || pid == 0) return -1;
 
