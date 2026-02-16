@@ -66,26 +66,26 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       pte_t *pte = page_walk((pagetable_t)(current->pagetable),
                             ROUNDDOWN(stval, PGSIZE), 1);
       if(READ_PTE_COW(pte)) {
-        // sprint("READ_PTE_COW(pte) == 1\n");
-        uint32 ref_count = get_page_refcount(PTE2PA(*pte));
+        uint64 old_pa = PTE2PA(*pte);  // 在 unmap 之前保存旧物理地址
+        uint32 ref_count = get_page_refcount(old_pa);
         if(ref_count > 1) {
           // 还有其他进程引用该页，分配新页并复制内容
-          // sprint("ref_count > 1\n");
           void* new_pa = alloc_page();
-          memmove(new_pa, (void*)PTE2PA(*pte), PGSIZE);
+          memmove(new_pa, (void*)old_pa, PGSIZE);
           user_vm_unmap((pagetable_t)(current->pagetable), 
                     ROUNDDOWN(stval, PGSIZE), PGSIZE, 0);
           user_vm_map((pagetable_t)(current->pagetable),
                     ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)new_pa,
                     prot_to_type(PROT_WRITE | PROT_READ, 1));
-          dec_page_refcount(PTE2PA(*pte)); // 减少原页引用计数
+          dec_page_refcount(old_pa); // 减少原页引用计数（用保存的旧地址）
         } else {
           // 只有当前进程引用该页，直接设置为可写
+          CLEAR_PTE_COW(pte);  // 清除 COW 标记
           SET_PTE_W(pte);
         }
         break;
       }
-
+      
       void *pa = alloc_page();
       user_vm_map((pagetable_t)(current->pagetable),
                 ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa,

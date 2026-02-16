@@ -202,6 +202,7 @@ static inline void flush_tlb(void) { asm volatile("sfence.vma zero, zero"); }
 
 #define SET_PTE_COW(pte)   (*(pte) |= PTE_COW)
 #define READ_PTE_COW(pte)  (*(pte) & PTE_COW)
+#define CLEAR_PTE_COW(pte) (*(pte) &= ~PTE_COW)
 #define CLEAR_PTE_W(pte)   (*(pte) &= ~PTE_W)
 #define SET_PTE_W(pte)     (*(pte) |= PTE_W)
 
