@@ -121,6 +121,9 @@ typedef struct process_t {
 
   // file system. added @lab4_1
   proc_file_management *pfiles;
+
+  // executable path, for backtrace etc.
+  char exe_path[128];
 }process;
 
 // switch to run user app

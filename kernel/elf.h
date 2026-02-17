@@ -3,6 +3,7 @@
 
 #include "util/types.h"
 #include "process.h"
+#include "spike_interface/spike_utils.h"
 
 #define MAX_CMDLINE_ARGS 64
 
@@ -63,7 +64,40 @@ typedef struct elf_ctx_t {
 elf_status elf_init(elf_ctx *ctx, void *info);
 elf_status elf_load(elf_ctx *ctx);
 
+elf_status elf_init_vfs(elf_ctx *ctx, void *info);
+
 void load_bincode_from_host_elf(process *p, char *filename);
 void load_bincode_from_host_elf_for_exec(process *p, char *pathname);
+
+
+typedef struct elf_info_t {
+  struct file *f;
+  process *p;
+} elf_info;
+
+// added @lab1_challenge1
+typedef struct {
+  uint32 sh_name;      // 节名在 .shstrtab 中的偏移
+  uint32 sh_type;      // 节类型 (2=SYMTAB, 3=STRTAB)
+  uint64 sh_flags;     // 节标志
+  uint64 sh_addr;      // 节的虚拟地址
+  uint64 sh_offset;    // 节在文件中的偏移 ← 重要
+  uint64 sh_size;      // 节的大小 ← 重要
+  uint32 sh_link;      // 链接信息 (SYMTAB的sh_link指向对应的STRTAB)
+  uint32 sh_info;      // 额外信息
+  uint64 sh_addralign; // 对齐
+  uint64 sh_entsize;   // 如果包含固定大小的条目，这是条目大小
+} elf_section_header;
+
+typedef struct {
+  uint32 st_name;   // 符号名在 .strtab 中的偏移
+  uint8  st_info;   // 符号类型和绑定属性
+  uint8  st_other;  // 保留
+  uint16 st_shndx;  // 相关节的索引
+  uint64 st_value;  // 符号的值 (函数地址) ← 重要
+  uint64 st_size;   // 符号的大小 (函数大小) ← 重要
+} elf_symbol;
+
+int get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra);
 
 #endif

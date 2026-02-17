@@ -4,17 +4,13 @@
  */
 
 #include "elf.h"
-#include "string.h"
+#include "util/string.h"
 #include "riscv.h"
 #include "vmm.h"
 #include "pmm.h"
 #include "vfs.h"
 #include "spike_interface/spike_utils.h"
 
-typedef struct elf_info_t {
-  struct file *f;
-  process *p;
-} elf_info;
 
 //
 // the implementation of allocater. allocates memory space for later segment loading.
@@ -54,7 +50,7 @@ elf_status elf_init(elf_ctx *ctx, void *info) {
 
   // check the signature (magic value) of the elf
   if (ctx->ehdr.magic != ELF_MAGIC) return EL_NOTELF;
-
+  sprint("[DEBUG] EL_OK\n");
   return EL_OK;
 }
 
@@ -132,6 +128,9 @@ void load_bincode_from_host_elf(process *p, char *filename) {
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;
 
+  // record executable path for backtrace
+  safestrcpy(p->exe_path, filename, sizeof(p->exe_path));
+
   // close the vfs file
   vfs_close( info.f );
 
@@ -182,7 +181,7 @@ static uint64 elf_fpread_vfs(elf_ctx *ctx, void *dest, uint64 nb, uint64 offset)
 //
 // VFS 版本的 ELF 初始化（替代 elf_init）
 //
-static elf_status elf_init_vfs(elf_ctx *ctx, void *info) {
+elf_status elf_init_vfs(elf_ctx *ctx, void *info) {
   ctx->info = info;
 
   // 从文件开头读取 ELF header
@@ -270,8 +269,95 @@ void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
   // entry (virtual, also physical in lab1_x) address
   p->trapframe->epc = elfloader.ehdr.entry;
 
+  // record executable path for backtrace
+  safestrcpy(p->exe_path, pathname, sizeof(p->exe_path));
+
   // close the host spike file
   vfs_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
+
+// added @lab1_challenge1
+// ============================= Below are utils for print_backtrace =============================
+void find_all_section(elf_ctx* ctx, elf_section_header* section_headers) {
+  for (int i = 0; i < ctx->ehdr.shnum; i++) {
+    elf_fpread(ctx, 
+              (void*)(section_headers + i), 
+              sizeof(elf_section_header), 
+              ctx->ehdr.shoff + i * ctx->ehdr.shentsize);
+  }
+}
+
+void find_shstrtab(elf_ctx* ctx, elf_section_header* section_headers, char* shstrtab) {
+  // .shstrtab 的索引在 ehdr.shstrndx 中
+  elf_section_header *shstrtab_hdr = &section_headers[ctx->ehdr.shstrndx];
+
+  // 读取 .shstrtab 的内容
+  elf_fpread(ctx, shstrtab, shstrtab_hdr->sh_size, shstrtab_hdr->sh_offset);
+}
+
+void find_section(elf_ctx* ctx, elf_section_header* section_headers, 
+                  char* tg_section_name, elf_section_header* hdr) {
+
+  // 获取shstrtab的内容
+  // sprint("[DEBUG] Entered find_section to find %s\n", tg_section_name);
+  int shstrtab_sz = section_headers[ctx->ehdr.shstrndx].sh_size;
+  char shstrtab[shstrtab_sz + 1];
+  find_shstrtab(ctx, section_headers, shstrtab);
+
+  for (int i = 0; i < ctx->ehdr.shnum; i++) {
+      // 获取节名 (通过 sh_name 在 shstrtab 中的偏移)
+      char *section_name = shstrtab + section_headers[i].sh_name;
+      
+      // 比较节名
+      if (strcmp(section_name, tg_section_name) == 0) {
+        *hdr = section_headers[i];
+        // sprint("[DEBUG] found tg_sction_name: %s\n", tg_section_name);
+        return;
+      } 
+  }
+}
+
+int get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra) {
+  sprint("[DEBUG] Entered get_name_by_ra with ra: 0x%lx\n", ra);
+  find_all_section(ctx, section_headers);
+
+  // 读取符号表
+  elf_section_header symtab_hdr;
+  find_section(ctx, section_headers, ".symtab", &symtab_hdr);
+  int symbol_count = symtab_hdr.sh_size / sizeof(elf_symbol);
+  elf_symbol symbols[symbol_count];
+  elf_fpread(ctx, (void*)&symbols, symtab_hdr.sh_size, symtab_hdr.sh_offset);
+
+  // 读取字符串表
+  elf_section_header strtab_hdr;
+  find_section(ctx, section_headers, ".strtab", &strtab_hdr);
+  char strtab[strtab_hdr.sh_size + 1];
+  elf_fpread(ctx, (void*)strtab, strtab_hdr.sh_size, strtab_hdr.sh_offset);
+  
+  char *function_name = NULL;
+
+  for (int i = 0; i < symbol_count; i++) {
+    elf_symbol *sym = &symbols[i];
+    
+    // 检查符号类型 (st_info的低4位)
+    uint8 symbol_type = sym->st_info & 0x0F;
+    
+    // STT_FUNC = 2 (函数符号)
+    if (symbol_type != 2) continue;
+    
+    // 检查 ra 是否在函数的地址范围内
+    // ra 可能是函数中间的地址，或者是调用后的返回地址
+    if (ra >= sym->st_value && ra < sym->st_value + sym->st_size) {
+      // 找到了！获取函数名
+      // sprint("[DEBUG] matched ra: 0x%lx with st_value: 0x%lx, st_size: 0x%lx\n", 
+      //         ra, sym->st_value, sym->st_size);
+      function_name = strtab + sym->st_name;
+      // sprint("[DEBUG] found function_name: %s\n",function_name);
+      sprint("%s\n", function_name);
+      return 1;
+    }
+  }
+  return 0;
 }

@@ -45,6 +45,8 @@
 // added @lab2_challenge2
 #define SYS_user_allocate_for_better_malloc (SYS_user_base + 38)
 #define SYS_user_free_for_better_free (SYS_user_base + 39)
+// added @lab1_challenge1
+#define SYS_user_print_backtrace (SYS_user_base + 40)
 
 #define MAX_SEMAPHORES 32
 

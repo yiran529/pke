@@ -14,6 +14,9 @@ void naive_free(void* va);
 int fork();
 void yield();
 
+// added @lab1_challenge1
+int print_backtrace(int nlayers);
+
 // added @lab2_challenge2
 void* better_malloc(int n);
 void better_free(void* va);

@@ -14,6 +14,8 @@
 #include "vmm.h"
 #include "sched.h"
 #include "proc_file.h"
+#include "elf.h"
+#include "kernel.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -50,6 +52,81 @@ ssize_t sys_user_exit(uint64 code) {
   // reclaim the current process, and reschedule. added @lab3_1
   free_process( current );
   schedule();
+  return 0;
+}
+
+// added @lab1_challenge1
+ssize_t sys_user_print_backtrace(uint32 nlayers) {
+  sprint("[DEBUG] sys_user_print_backtrace called with nlayers=%d\n", nlayers);
+  // 重新打开 ELF 文件
+  arg_buf arg_bug_msg;
+  size_t argc = parse_args(&arg_bug_msg);  // 需要将 parse_args 改为非 static
+
+  elf_ctx elfloader;
+  elf_info info;
+  
+  info.f = vfs_open(current->exe_path, O_RDONLY);
+  sprint("[DEBUG] Opened ELF file for backtrace: %s\n", current->exe_path);
+  info.p = current;
+  
+  if (IS_ERR_VALUE(info.f)) {
+    sprint("Failed to open ELF file\n");
+    return -1;
+  }
+  
+  if (elf_init_vfs(&elfloader, &info) != EL_OK) {
+    vfs_close(info.f);
+    return -1;
+  }
+
+  uint64 fp = current->trapframe->regs.s0; // fp寄存器
+  uint64 ra = current->trapframe->regs.ra; 
+  elf_section_header section_headers[20]; //理论上限远不止20，这里为了方便而进行简化
+
+  // fp 是用户态虚拟地址，内核中必须通过 user_va_to_pa 转换后才能解引用
+  //
+  // ecall 时的寄存器状态:
+  //   ra = 返回到 print_backtrace 中的地址
+  //   s0 = do_user_call 的帧指针
+  //
+  // do_user_call 的帧布局 (只保存了 s0，没保存 ra):
+  //   *(s0 - 8)  = saved old s0 = print_backtrace 的帧指针
+  //
+  // 正常函数的帧布局:
+  // 高地址
+  // -----------------
+  // 调用者栈帧
+  // ----------------- ← fp (= 旧 sp)
+  // 返回地址 (ra)
+  // 旧的 fp
+  // 局部变量
+  // 临时空间
+  // ----------------- ← sp
+  // 低地址
+  //
+  if (fp == 0) goto done;
+
+  // 步骤1: 从 do_user_call 的帧中取出 print_backtrace 的 fp
+  // do_user_call 只在 *(s0-8) 保存了 old s0，没有保存 ra
+  fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
+  // 此时 ra 仍指向 print_backtrace 内部 (trapframe->ra)，fp 是 print_backtrace 的帧指针
+
+  // 步骤2: 跳过 print_backtrace，直接到它的调用者 (f8)
+  if (fp == 0) goto done;
+  ra = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
+  fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 16));
+
+  // 步骤3: 正常遍历剩余帧
+  while(fp != 0 && get_name_by_ra(&elfloader, section_headers, ra)) {
+     uint64 new_ra = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
+     uint64 new_fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 16));
+     ra = new_ra;
+     fp = new_fp;
+     nlayers--;
+     if (nlayers == 0) break;
+  }
+done:
+  vfs_close(info.f);
   return 0;
 }
 
@@ -482,6 +559,9 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_print((const char*)a1, a2);
     case SYS_user_exit:
       return sys_user_exit(a1);
+    // added @lab1_challenge1
+    case SYS_user_print_backtrace:
+      return sys_user_print_backtrace(a1);
     // added @lab2_2
     case SYS_user_allocate_page:
       return sys_user_allocate_page();
