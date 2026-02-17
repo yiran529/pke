@@ -16,6 +16,7 @@
 #include "proc_file.h"
 #include "elf.h"
 #include "kernel.h"
+#include "config.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -25,17 +26,22 @@
 ssize_t sys_user_print(const char* buf, size_t n) {
   // buf is now an address in user space of the given app's user stack,
   // so we have to transfer it into phisical address (kernel is running in direct mapping).
-  assert( current );
+  int hid = read_tp();
+  process* p = current[hid];
+
+  assert(p);
   
   // sprint("\n=== KERNEL MODE: Manual Translation Required ===\n");
   // sprint("buf (user VA): 0x%lx\n", (uint64)buf);
-  // sprint("Current satp:  0x%lx (points to KERNEL page table)\n", read_csr(satp));
-  // sprint("User pagetable: 0x%lx\n", (uint64)current->pagetable);
+  // sprint("Current[hid] satp:  0x%lx (points to KERNEL page table)\n", read_csr(satp));
+  // sprint("User pagetable: 0x%lx\n", (uint64)current[hid]->pagetable);
   // sprint("Why manual? satp != user_pagetable, so MMU can't auto-translate buf!\n");
   // sprint("Calling user_va_to_pa() to manually walk user page table...\n");
   
-  char* pa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)buf);
-  sprint(pa);
+  char* pa = (char*)user_va_to_pa((pagetable_t)(p->pagetable), (void*)buf);
+  // sprint(pa);
+  // Add hartid to prints so we can distinguish which hart produced the user message.
+  sprint("hartid = %d: %s\n", hid, pa);
   // sprint("Translated PA: 0x%lx\n", (uint64)pa);
   // sprint("Message: %s", pa);
   // sprint("===========================================\n\n");
@@ -46,18 +52,50 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 // implement the SYS_user_exit syscall
 //
 ssize_t sys_user_exit(uint64 code) {
-  sprint("User exit with code:%d.\n", code);
-  if(current->parent) {current->parent->status = READY; }
-  if(current->parent) {insert_to_ready_queue( current->parent ); }
-  // reclaim the current process, and reschedule. added @lab3_1
-  free_process( current );
-  schedule();
-  return 0;
+  // sprint("hartid = ?: User exit with code:%d.\n", code);
+  // // in lab1, PKE considers only one app (one process). 
+  // // therefore, shutdown the system when the app calls exit()
+  // sprint("hartid = ?: shutdown with code:%d.\n", code);
+  // shutdown(code);
+  int hid = read_tp();
+  sprint("hartid = %d: User exit with code:%d.\n", hid, code);
+
+  // Cooperative shutdown: in multicore we must wait until all harts finish before
+  // calling shutdown, otherwise one hart would terminate others prematurely.
+  static volatile int exit_count = 0;
+
+  // atomic add: every hart that exits increments the counter. Using amoor to avoid
+  // needing a lock in this simple setting.
+  int old;
+  asm volatile("amoadd.w %0, %1, (%2)"
+               : "=r"(old)
+               : "r"(1), "r"(&exit_count)
+               : "memory");
+
+  int newval = old + 1;
+  if (hid == 0) {
+    // hart0 waits until all harts report exit, then shuts down the system.
+    while (newval < NCPU) {
+      newval = exit_count; // busy-wait; simple and sufficient for this lab
+    }
+    sprint("hartid = %d: shutdown with code:%d.\\n", hid, code);
+    shutdown(code);
+  }
+
+  // After reporting exit, disable further timer interrupts on this hart to avoid being
+  // re-entered while parked. Clear S-mode enables and pending bits (accessible in S).
+  write_csr(sie, 0);
+  write_csr(sip, 0);
+
+  // Non-zero harts just park; hart0 will eventually power off when counter reaches
+  // NCPU.
+  while (1) asm volatile("wfi");
 }
 
 // added @lab1_challenge1
 ssize_t sys_user_print_backtrace(uint32 nlayers) {
-  sprint("[DEBUG] sys_user_print_backtrace called with nlayers=%d\n", nlayers);
+  int hid = read_tp();
+  sprint("[DEBUG] hartid = %d: sys_user_print_backtrace called with nlayers=%d\n", hid, nlayers);
   // 重新打开 ELF 文件
   arg_buf arg_bug_msg;
   size_t argc = parse_args(&arg_bug_msg);  // 需要将 parse_args 改为非 static
@@ -65,12 +103,12 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
   elf_ctx elfloader;
   elf_info info;
   
-  info.f = vfs_open(current->exe_path, O_RDONLY);
-  sprint("[DEBUG] Opened ELF file for backtrace: %s\n", current->exe_path);
-  info.p = current;
+  info.f = vfs_open(current[hid]->exe_path, O_RDONLY);
+  sprint("[DEBUG] hartid = %d: Opened ELF file for backtrace: %s\n", hid, current[hid]->exe_path);
+  info.p = current[hid];
   
   if (IS_ERR_VALUE(info.f)) {
-    sprint("Failed to open ELF file\n");
+    sprint("hartid = %d: Failed to open ELF file\n", hid);
     return -1;
   }
   
@@ -79,8 +117,8 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
     return -1;
   }
 
-  uint64 fp = current->trapframe->regs.s0; // fp寄存器
-  uint64 ra = current->trapframe->regs.ra; 
+  uint64 fp = current[hid]->trapframe->regs.s0; // fp寄存器
+  uint64 ra = current[hid]->trapframe->regs.ra; 
   elf_section_header section_headers[20]; //理论上限远不止20，这里为了方便而进行简化
 
   // fp 是用户态虚拟地址，内核中必须通过 user_va_to_pa 转换后才能解引用
@@ -108,18 +146,18 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
 
   // 步骤1: 从 do_user_call 的帧中取出 print_backtrace 的 fp
   // do_user_call 只在 *(s0-8) 保存了 old s0，没有保存 ra
-  fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
+  fp = *(uint64*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)(fp - 8));
   // 此时 ra 仍指向 print_backtrace 内部 (trapframe->ra)，fp 是 print_backtrace 的帧指针
 
   // 步骤2: 跳过 print_backtrace，直接到它的调用者 (f8)
   if (fp == 0) goto done;
-  ra = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
-  fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 16));
+  ra = *(uint64*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)(fp - 8));
+  fp = *(uint64*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)(fp - 16));
 
   // 步骤3: 正常遍历剩余帧
   while(fp != 0 && get_name_by_ra(&elfloader, section_headers, ra)) {
-     uint64 new_ra = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 8));
-     uint64 new_fp = *(uint64*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)(fp - 16));
+     uint64 new_ra = *(uint64*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)(fp - 8));
+     uint64 new_fp = *(uint64*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)(fp - 16));
      ra = new_ra;
      fp = new_fp;
      nlayers--;
@@ -134,13 +172,14 @@ done:
 /* Below are functions for lab2_challenge2 */
 uint64 find_first_fit(process *p, uint64 size) {
   uint64 va = p->heap_va;
-  sprint("[DEBUG] Finding first fit for size %d in simple heap starting at va 0x%lx\n", size, p->heap_va);
+  int hid = read_tp();
+  sprint("[DEBUG] hartid = %d: Finding first fit for size %d in simple heap starting at va 0x%lx\n", hid, size, p->heap_va);
   uint64 heap_limit = p->heap_va + PGSIZE; // 简单堆当前仅一页
   while (va + CHUNK_HDR_SIZE <= heap_limit) {
     // VA -> PA 再访问
     heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)va);
-    sprint("[DEBUG] p: 0x%lx, pagetable: 0x%lx\n", (uint64)p, (uint64)p->pagetable);
-    sprint("[DEBUG] Checking chunk at va 0x%lx(pa: 0x%lx): size %d, flags %d\n", va, (uint64)hdr, hdr ? hdr->size : 0, hdr ? hdr->flags : 0);
+    sprint("[DEBUG] hartid = %d: p: 0x%lx, pagetable: 0x%lx\n", hid, (uint64)p, (uint64)p->pagetable);
+    sprint("[DEBUG] hartid = %d: Checking chunk at va 0x%lx(pa: 0x%lx): size %d, flags %d\n", hid, va, (uint64)hdr, hdr ? hdr->size : 0, hdr ? hdr->flags : 0);
     if (!hdr) break; // 未映射，异常
     if (CHUNK_IS_FREE(hdr) && hdr->size - CHUNK_HDR_SIZE >= ALIGN_UP(size, CHUNK_ALIGN) ) { // free 且足够大
       hdr->flags = 1; // 标记为 used
@@ -165,14 +204,15 @@ uint64 find_first_fit(process *p, uint64 size) {
 }
 
 uint64 sys_user_allocate_for_better_malloc(int n) {
+  int hid = read_tp();
   // void* pa = alloc_page();
   // /*取当前“用户简单堆”指针的当前位置作为本次分配的虚拟页起始地址。
   // g_ufree_page 是一个单调递增游标，表示下一个可用的用户虚拟地址（位于用户进程的“自由区”起点之后）*/
   // uint64 va = g_ufree_page;
   // g_ufree_page += PGSIZE;
-  // user_vm_map((pagetable_t)current->pagetable, va, PGSIZE, (uint64)pa,
+  // user_vm_map((pagetable_t)current[hid]->pagetable, va, PGSIZE, (uint64)pa,
   //        prot_to_type(PROT_WRITE | PROT_READ, 1));
-  uint64 va = find_first_fit(current, n);
+  uint64 va = find_first_fit(current[hid], n);
   if (va == 0) {
     panic("Not supported for now: malloc more than one page or no enough memory in the simple heap!\n");
     // return 0; // 分配失败
@@ -225,13 +265,14 @@ void collesce_backward(process *p, heap_chunk_t *hdr, uint64 va) {
 // reclaim a page, indicated by "va". added @lab2_2
 //
 uint64 sys_user_free_for_better_free(uint64 va) {
+  int hid = read_tp();
   // TODO : 如果va是非法的???????
   uint64 actual_va = va - CHUNK_HDR_SIZE;
-  heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(current->pagetable, (void*)actual_va);
+  heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(current[hid]->pagetable, (void*)actual_va);
   hdr->flags = 0; // 标记为 free
   // 向前向后合并空闲块
-  collesce_forward(current, hdr, actual_va);
-  collesce_backward(current, hdr, actual_va);
+  collesce_forward(current[hid], hdr, actual_va);
+  collesce_backward(current[hid], hdr, actual_va);
   return 0;
 }
 ///////////////////////////////
@@ -240,21 +281,22 @@ uint64 sys_user_free_for_better_free(uint64 va) {
 // maybe, the simplest implementation of malloc in the world ... added @lab2_2
 //
 uint64 sys_user_allocate_page() {
+  int hid = read_tp();
   void* pa = alloc_page();
   uint64 va;
   // if there are previously reclaimed pages, use them first (this does not change the
   // size of the heap)
-  if (current->user_heap.free_pages_count > 0) {
-    va =  current->user_heap.free_pages_address[--current->user_heap.free_pages_count];
-    assert(va < current->user_heap.heap_top);
+  if (current[hid]->user_heap.free_pages_count > 0) {
+    va =  current[hid]->user_heap.free_pages_address[--current[hid]->user_heap.free_pages_count];
+    assert(va < current[hid]->user_heap.heap_top);
   } else {
     // otherwise, allocate a new page (this increases the size of the heap by one page)
-    va = current->user_heap.heap_top;
-    current->user_heap.heap_top += PGSIZE;
+    va = current[hid]->user_heap.heap_top;
+    current[hid]->user_heap.heap_top += PGSIZE;
 
-    current->mapped_info[HEAP_SEGMENT].npages++;
+    current[hid]->mapped_info[HEAP_SEGMENT].npages++;
   }
-  user_vm_map((pagetable_t)current->pagetable, va, PGSIZE, (uint64)pa,
+  user_vm_map((pagetable_t)current[hid]->pagetable, va, PGSIZE, (uint64)pa,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
 
   return va;
@@ -264,9 +306,10 @@ uint64 sys_user_allocate_page() {
 // reclaim a page, indicated by "va". added @lab2_2
 //
 uint64 sys_user_free_page(uint64 va) {
-  user_vm_unmap((pagetable_t)current->pagetable, va, PGSIZE, 1);
+  int hid = read_tp();
+  user_vm_unmap((pagetable_t)current[hid]->pagetable, va, PGSIZE, 1);
   // add the reclaimed page to the free page list
-  current->user_heap.free_pages_address[current->user_heap.free_pages_count++] = va;
+  current[hid]->user_heap.free_pages_address[current[hid]->user_heap.free_pages_count++] = va;
   return 0;
 }
 
@@ -274,21 +317,23 @@ uint64 sys_user_free_page(uint64 va) {
 // kerenl entry point of naive_fork
 //
 ssize_t sys_user_fork() {
-  sprint("User call fork.\n");
-  return do_fork( current );
+  int hid = read_tp();
+  sprint("hartid = %d: User call fork.\n", hid);
+  return do_fork( current[hid] );
 }
 
 //
 // kerenl entry point of yield. added @lab3_2
 //
 ssize_t sys_user_yield() {
+  int hid = read_tp();
   // TODO (lab3_2): implment the syscall of yield.
   // hint: the functionality of yield is to give up the processor. therefore,
-  // we should set the status of currently running process to READY, insert it in
+  // we should set the status of current[hid]ly running process to READY, insert it in
   // the rear of ready queue, and finally, schedule a READY process to run.
   // panic( "You need to implement the yield syscall in lab3_2.\n" );
-  current->status = READY;
-  insert_to_ready_queue(current);
+  current[hid]->status = READY;
+  insert_to_ready_queue(current[hid]);
   schedule();
   return 0;
 }
@@ -319,6 +364,7 @@ ssize_t sys_user_sem_new(int count) {
 }
 
 int sys_user_sem_P(int sem) {
+  int hid = read_tp();
     if(sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
         return -1; // invalid semaphore
     }
@@ -329,24 +375,24 @@ int sys_user_sem_P(int sem) {
         semaphores[sem]--;
         return 1;
       } else {
-        // sprint("[DEBUG] Semaphore %d is not available, blocking current process %d\n", sem, current->pid);
+        // sprint("[DEBUG] Semaphore %d is not available, blocking current[hid] process %d\n", sem, current[hid]->pid);
         // insert into semaphore's blocked queue
-        // block the current process
-        current -> status = BLOCKED;
+        // block the current[hid] process
+        current[hid] -> status = BLOCKED;
 
         // make sure the process is not already in the blocked queue
         int unique = 1;
         for(int i = 0; i < queue_lengths[sem]; i++) {
-          if (queue[sem][i] == current) {            
+          if (queue[sem][i] == current[hid]) {            
             unique = 0;
           }
         }
 
         if (unique) {
-          queue[sem][queue_lengths[sem]++] = current; 
+          queue[sem][queue_lengths[sem]++] = current[hid]; 
         }
 
-        current->trapframe->epc -= 4; // 让被阻塞的进程在恢复时重新执行P操作
+        current[hid]->trapframe->epc -= 4; // 让被阻塞的进程在恢复时重新执行P操作
         schedule();
       }
     }
@@ -389,8 +435,9 @@ int sys_user_sem_V(int sem) {
 // added @lab3_challenge3
 ssize_t sys_user_printpa(uint64 va)
 {
-  uint64 pa = (uint64)user_va_to_pa((pagetable_t)(current->pagetable), (void*)va);
-  sprint("%lx\n", pa);
+  int hid = read_tp();
+  uint64 pa = (uint64)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)va);
+  sprint("hartid = %d: pa = %lx\n", hid, pa);
   return 0;
 }
 
@@ -400,8 +447,9 @@ ssize_t sys_user_printpa(uint64 va)
 // open file
 //
 ssize_t sys_user_open(char *pathva, int flags) {
-  char* pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_open(pathpa, flags, current->pfiles->cwd);
+  int hid = read_tp();
+  char* pathpa = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathva);
+  return do_open(pathpa, flags, current[hid]->pfiles->cwd);
 }
 
 
@@ -409,10 +457,11 @@ ssize_t sys_user_open(char *pathva, int flags) {
 // read file
 //
 ssize_t sys_user_read(int fd, char *bufva, uint64 count) {
+  int hid = read_tp();
   int i = 0;
   while (i < count) { // count can be greater than page size
     uint64 addr = (uint64)bufva + i;
-    uint64 pa = lookup_pa((pagetable_t)current->pagetable, addr);
+    uint64 pa = lookup_pa((pagetable_t)current[hid]->pagetable, addr);
     uint64 off = addr - ROUNDDOWN(addr, PGSIZE);
     uint64 len = count - i < PGSIZE - off ? count - i : PGSIZE - off;
     uint64 r = do_read(fd, (char *)pa + off, len);
@@ -425,10 +474,11 @@ ssize_t sys_user_read(int fd, char *bufva, uint64 count) {
 // write file
 //
 ssize_t sys_user_write(int fd, char *bufva, uint64 count) {
+  int hid = read_tp();
   int i = 0;
   while (i < count) { // count can be greater than page size
     uint64 addr = (uint64)bufva + i;
-    uint64 pa = lookup_pa((pagetable_t)current->pagetable, addr);
+    uint64 pa = lookup_pa((pagetable_t)current[hid]->pagetable, addr);
     uint64 off = addr - ROUNDDOWN(addr, PGSIZE);
     uint64 len = count - i < PGSIZE - off ? count - i : PGSIZE - off;
     uint64 r = do_write(fd, (char *)pa + off, len);
@@ -448,7 +498,8 @@ ssize_t sys_user_lseek(int fd, int offset, int whence) {
 // read vinode
 //
 ssize_t sys_user_stat(int fd, struct istat *istat) {
-  struct istat * pistat = (struct istat *)user_va_to_pa((pagetable_t)(current->pagetable), istat);
+  int hid = read_tp();
+  struct istat * pistat = (struct istat *)user_va_to_pa((pagetable_t)(current[hid]->pagetable), istat);
   return do_stat(fd, pistat);
 }
 
@@ -456,7 +507,8 @@ ssize_t sys_user_stat(int fd, struct istat *istat) {
 // read disk inode
 //
 ssize_t sys_user_disk_stat(int fd, struct istat *istat) {
-  struct istat * pistat = (struct istat *)user_va_to_pa((pagetable_t)(current->pagetable), istat);
+  int hid = read_tp();
+  struct istat * pistat = (struct istat *)user_va_to_pa((pagetable_t)(current[hid]->pagetable), istat);
   return do_disk_stat(fd, pistat);
 }
 
@@ -471,15 +523,17 @@ ssize_t sys_user_close(int fd) {
 // lib call to opendir
 //
 ssize_t sys_user_opendir(char * pathva){
-  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_opendir(pathpa, current->pfiles->cwd);
+  int hid = read_tp();
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathva);
+  return do_opendir(pathpa, current[hid]->pfiles->cwd);
 }
 
 //
 // lib call to readdir
 //
 ssize_t sys_user_readdir(int fd, struct dir *vdir){
-  struct dir * pdir = (struct dir *)user_va_to_pa((pagetable_t)(current->pagetable), vdir);
+  int hid = read_tp();
+  struct dir * pdir = (struct dir *)user_va_to_pa((pagetable_t)(current[hid]->pagetable), vdir);
   return do_readdir(fd, pdir);
 }
 
@@ -487,7 +541,8 @@ ssize_t sys_user_readdir(int fd, struct dir *vdir){
 // lib call to mkdir
 //
 ssize_t sys_user_mkdir(char * pathva){
-  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
+  int hid = read_tp();
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathva);
   return do_mkdir(pathpa);
 }
 
@@ -502,8 +557,9 @@ ssize_t sys_user_closedir(int fd){
 // lib call to link
 //
 ssize_t sys_user_link(char * vfn1, char * vfn2){
-  char * pfn1 = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn1);
-  char * pfn2 = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn2);
+  int hid = read_tp();
+  char * pfn1 = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)vfn1);
+  char * pfn2 = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)vfn2);
   return do_link(pfn1, pfn2);
 }
 
@@ -511,36 +567,40 @@ ssize_t sys_user_link(char * vfn1, char * vfn2){
 // lib call to unlink
 //
 ssize_t sys_user_unlink(char * vfn){
-  char * pfn = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn);
+  int hid = read_tp();
+  char * pfn = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), (void*)vfn);
   return do_unlink(pfn);
 }
 
-// lib call to read / change current working directory @lab4_challenge1
+// lib call to read / change current[hid] working directory @lab4_challenge1
 ssize_t sys_user_rcwd(char * pathva){
-  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
+  int hid = read_tp();
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathva);
   return do_rcwd(pathpa);
 }
 
 ssize_t sys_user_ccwd(char * pathva){
-  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_ccwd(pathpa, &(current->pfiles->cwd));
+  int hid = read_tp();
+  char * pathpa = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathva);
+  return do_ccwd(pathpa, &(current[hid]->pfiles->cwd));
 }
 
 //
 // implement the SYS_user_exec syscall @lab4_challenge2
 //
 ssize_t sys_user_exec(char *pathname, char *argv) {
+  int hid = read_tp();
   // pathname 是用户空间地址，需要转换为物理地址
-  char *pa_pathname = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathname);
+  char *pa_pathname = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), pathname);
   
   // argv 也需要转换（如果不为空）
   char *pa_argv = NULL;
   if (argv != NULL) {
-    pa_argv = (char*)user_va_to_pa((pagetable_t)(current->pagetable), argv);
+    pa_argv = (char*)user_va_to_pa((pagetable_t)(current[hid]->pagetable), argv);
   }
   
   // 调用内核辅助函数执行 exec
-  return do_exec(current, pa_pathname, pa_argv);
+  return do_exec(current[hid], pa_pathname, pa_argv);
 }
 
 ssize_t sys_user_wait(int pid) {

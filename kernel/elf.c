@@ -312,7 +312,8 @@ elf_status elf_load(elf_ctx *ctx) {
 // load the elf of user application, by using the spike file interface.
 //
 void load_bincode_from_host_elf(process *p, char *filename) {
-  sprint("Application: %s\n", filename);
+  // sprint("Application: %s\n", filename);
+  sprint("hartid = ?: Application: %s\n", filename);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
@@ -345,7 +346,8 @@ void load_bincode_from_host_elf(process *p, char *filename) {
   // close the vfs file
   vfs_close( info.f );
 
-  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  // sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  sprint("hartid = ?: Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }
 
 /* Below are helper funcion for implmentation of exec.
@@ -458,7 +460,8 @@ elf_status elf_load_vfs(elf_ctx *ctx) {
 // load the elf of user application, by using the spike file interface.
 //
 void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
-  sprint("Application: %s\n", pathname);
+  // sprint("Application: %s\n", pathname);
+  sprint("hartid = ?: Application: %s\n", pathname);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
@@ -491,7 +494,8 @@ void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
   // close the host spike file
   vfs_close( info.f );
 
-  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  // sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  sprint("hartid = ?: Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }
 
 // added @lab1_challenge1

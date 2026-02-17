@@ -3,6 +3,7 @@
 
 #include "riscv.h"
 #include "proc_file.h"
+#include "config.h"
 
 typedef struct trapframe_t {
   // space to store context (all common registers)
@@ -158,7 +159,10 @@ int do_exec(process* proc, char *pathname, char *argv);
 
 int do_wait(int pid);
 
-// current running process
-extern process* current;
+// Each hart keeps its own current pointer to avoid clobbering another hart's context.
+// In multicore, timer/syscall traps must return to the process that was running on that
+// hart, so we store per-hart 'current'.
+// address of the first free page in our simple heap. added @lab2_2
+extern process* current[NCPU];
 
 #endif

@@ -6,6 +6,7 @@
 #include "kernel/riscv.h"
 #include "kernel/config.h"
 #include "spike_interface/spike_utils.h"
+#include "kernel/sync_utils.h"
 
 //
 // global variables are placed in the .data section.
@@ -17,6 +18,11 @@
 //
 __attribute__((aligned(16))) char stack0[4096 * NCPU];
 
+// barrier used to ensure that spike/HTIF/device-tree initialization is executed only
+// once by hart0, while the other harts wait until the unique resources are ready.
+// Without this barrier, hart1 could access uninitialized HTIF state and crash.
+static volatile int g_init_barrier = 0;
+
 // sstart() is the supervisor state entry point defined in kernel/kernel.c
 extern void s_start();
 // M-mode trap entry point, added @lab1_2
@@ -26,9 +32,10 @@ extern void mtrapvec();
 extern uint64 htif;
 // g_mem_size is defined in spike_interface/spike_memory.c, size of the emulated memory
 extern uint64 g_mem_size;
-// struct riscv_regs is define in kernel/riscv.h, and g_itrframe is used to save
-// registers when interrupt hapens in M mode. added @lab1_2
-riscv_regs g_itrframe;
+// struct riscv_regs is define in kernel/riscv.h. In multicore we need one M-mode
+// interrupt frame per hart to avoid concurrent M-mode traps clobbering each other's
+// saved registers. indexed by hartid.
+riscv_regs g_itrframe[NCPU];
 
 //
 // get the information of HTIF (calling interface) and the emulated memory by
@@ -91,18 +98,34 @@ void timerinit(uintptr_t hartid) {
 // m_start: machine mode C entry point.
 //
 void m_start(uintptr_t hartid, uintptr_t dtb) {
-  // init the spike file interface (stdin,stdout,stderr)
-  // functions with "spike_" prefix are all defined in codes under spike_interface/,
-  // sprint is also defined in spike_interface/spike_utils.c
-  spike_file_init();
+  // Record hartid into tp so that after we drop to S-mode (where reading mhartid is
+  // illegal), the kernel can still know which hart it is running on.
+  write_tp(hartid);
+
+  // For multicore, only hart0 should initialize unique simulator resources (HTIF, file
+  // interfaces, DTB parsing). Other harts must wait until initialization completes to
+  // avoid racing on the one-copy hardware resources.
+  if (hartid == 0) {
+    // init the spike file interface (stdin,stdout,stderr)
+    // functions with "spike_" prefix are all defined in codes under spike_interface/,
+    // sprint is also defined in spike_interface/spike_utils.c
+    spike_file_init();
+
+    // init HTIF (Host-Target InterFace) and memory by using the Device Table Blob (DTB)
+    // init_dtb() is defined above.
+    init_dtb(dtb);
+  }
+
   sprint("In m_start, hartid:%d\n", hartid);
 
-  // init HTIF (Host-Target InterFace) and memory by using the Device Table Blob (DTB)
-  // init_dtb() is defined above.
-  init_dtb(dtb);
+  // Synchronize all harts here: hart0 finishes the unique initialization first, then
+  // other harts continue. This prevents secondary harts from touching HTIF/memory info
+  // before it is ready.
+  sync_barrier(&g_init_barrier, NCPU);
 
-  // save the address of trap frame for interrupt in M mode to "mscratch". added @lab1_2
-  write_csr(mscratch, &g_itrframe);
+  // save the address of trap frame for interrupt in M mode to "mscratch". Use the
+  // per-hart slot to avoid corruption when multiple harts take M-mode traps.
+  write_csr(mscratch, &g_itrframe[hartid]);
 
   // set previous privilege mode to S (Supervisor), and will enter S mode after 'mret'
   // write_csr is a macro defined in kernel/riscv.h

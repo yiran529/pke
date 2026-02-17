@@ -16,6 +16,7 @@
 #include "rfs.h"
 #include "ramdev.h"
 #include "kernel.h"
+#include "config.h"
 
 //
 // trap_sec_start points to the beginning of S-mode trap segment (i.e., the entry point of
@@ -79,8 +80,9 @@ process* load_user_program() {
 // s_start: S-mode entry point of riscv-pke OS kernel.
 //
 int s_start(void) {
-  sprint("Enter supervisor mode...\n");
-  // in the beginning, we use Bare mode (direct) memory mapping as in lab1.
+  int hid = read_tp();
+  sprint("hartid = %d: Entering supervisor mode...\n", hid);
+   // in the beginning, we use Bare mode (direct) memory mapping as in lab1.
   // but now, we are going to switch to the paging mode @lab2_1.
   // note, the code still works in Bare mode when calling pmm_init() and kern_vm_init().
   write_csr(satp, 0);
@@ -102,7 +104,11 @@ int s_start(void) {
   // init file system, added @lab4_1
   fs_init();
 
-  sprint("Switch to user mode...\n");
+  sprint("hartid = %d: Switch to user mode...\n", hid);
+
+  uint64 hartid = 0;
+  
+  vm_alloc_stage[hartid] = 1;
   // the application code (elf) is first loaded into memory, and then put into execution
   // added @lab3_1
   insert_to_ready_queue( load_user_program() );

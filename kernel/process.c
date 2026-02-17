@@ -29,15 +29,18 @@ extern char trap_sec_start[];
 // process pool. added @lab3_1
 process procs[NPROC];
 
-// current points to the currently running user-mode application.
-process* current = NULL;
+// current points to the currently running user-mode application on each hart.
+// In multicore, each hart must track its own process to restore after traps, so we use
+// an array indexed by mhartid.
+process* current[NCPU] = {0};
 
 //
 // switch to a user-mode process
 //
 void switch_to(process* proc) {
   assert(proc);
-  current = proc;
+  int hid = read_tp();
+  current[hid] = proc;
 
   // write the smode_trap_vector (64-bit func. address) defined in kernel/strap_vector.S
   // to the stvec privilege register, such that trap handler pointed by smode_trap_vector
@@ -92,8 +95,10 @@ void init_proc_pool() {
 // process strcuture. added @lab3_1
 //
 process* alloc_process() {
+  int hid = read_tp();
+
   // locate the first usable process structure
-  sprint("[DEBUG] Entering alloc_process to find a free process structure.\n");
+  sprint("[DEBUG] hartid = %d: Entering alloc_process to find a free process structure.\n", hid);
   int i;
 
   for( i=0; i<NPROC; i++ )
@@ -118,7 +123,7 @@ process* alloc_process() {
 
   // allocates a page to record memory regions (segments)
   procs[i].mapped_info = (mapped_region*)alloc_page();
-  memset( procs[i].mapped_info, 0, PGSIZE );
+  memset( procs[i].mapped_info, 0, PGSIZE);
 
   // map user stack in userspace
   user_vm_map((pagetable_t)procs[i].pagetable, USER_STACK_TOP - PGSIZE, PGSIZE,
@@ -315,9 +320,10 @@ int do_fork( process* parent)
           free_block_filter[index] = 1;
         }
 
+        int hid = read_tp();
         // copy and map the heap blocks /// 跳过已释放的堆页
-        for (uint64 heap_block = current->user_heap.heap_bottom;
-             heap_block < current->user_heap.heap_top; heap_block += PGSIZE) {
+        for (uint64 heap_block = current[hid]->user_heap.heap_bottom;
+             heap_block < current[hid]->user_heap.heap_top; heap_block += PGSIZE) {
           if (free_block_filter[(heap_block - heap_bottom) / PGSIZE])  // skip free blocks
             continue;
 
@@ -583,6 +589,8 @@ int do_exec( process* proc, char* pathname, char* argv ) {
 }
 
 int do_wait(int pid) {
+  int hid = read_tp();
+
   sprint("[DEBUG] Entered do_wait %d\n", pid);
   // pid不合法
   if(pid < -1 || pid == 0) return -1;
@@ -593,12 +601,12 @@ int do_wait(int pid) {
       process* p = &procs[i];
 
       if(!p->parent) continue;
-      if(p->parent->pid != current->pid && p->pid == pid) {
+      if(p->parent->pid != current[hid]->pid && p->pid == pid) {
         return -1;
       }
-      if(p->parent->pid == current->pid && p->pid == pid) {
+      if(p->parent->pid == current[hid]->pid && p->pid == pid) {
         if (p->status != ZOMBIE) {
-          current->status = BLOCKED;
+          current[hid]->status = BLOCKED;
           schedule();
         }
         assert(p->status == ZOMBIE);
@@ -620,17 +628,17 @@ int do_wait(int pid) {
         // sprint("[DEBUG] Check if procs[%d] satisfies\n", i);
         process *p = &procs[i];
         if(!p->parent) continue;
-        if(p->parent->pid == current->pid) {
+        if(p->parent->pid == current[hid]->pid) {
           has_children = 1;
         }
-        if(p->parent->pid == current->pid && p->status == ZOMBIE) {
+        if(p->parent->pid == current[hid]->pid && p->status == ZOMBIE) {
           // user_vm_unmap(p.pagetable, ) ???
-          // current->status = BLOCKED; ???
+          // current[hid]->status = BLOCKED; ???
           // p->status = FREE;
           return p->pid;
         }
       }
-      current->status=BLOCKED;
+      current[hid]->status=BLOCKED;
       schedule();
     }
 

@@ -35,6 +35,8 @@ static uint64 kheap_start;
 static uint64 kheap_current;
 static uint64 kheap_end;
 
+int vm_alloc_stage[NCPU] = { 0 }; // 0 for kernel alloc, 1 for user alloc
+
 
 //
 // actually creates the freepage list. each page occupies 4KB (PGSIZE), i.e., small page.
@@ -65,6 +67,12 @@ void free_page(void *pa) {
 //
 void *alloc_page(void) {
   list_node *n = g_free_mem_list.next;
+
+  uint64 hartid = 0;
+  if (vm_alloc_stage[hartid]) {
+    sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
+  }
+  
   if (n) g_free_mem_list.next = n->next;
 
   inc_page_refcount((uint64)n);

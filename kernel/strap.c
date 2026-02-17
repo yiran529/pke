@@ -11,6 +11,7 @@
 #include "sched.h"
 #include "util/functions.h"
 #include "util/string.h"
+#include "config.h"
 
 #include "spike_interface/spike_utils.h"
 
@@ -33,19 +34,17 @@ static void handle_syscall(trapframe *tf) {
       tf->regs.a4, tf->regs.a5, tf->regs.a6, tf->regs.a7);
 }
 
-//
-// global variable that store the recorded "ticks". added @lab1_3
-static uint64 g_ticks = 0;
+// global variable that store the recorded "ticks" per hart. In multicore each hart has
+// its own timer interrupt stream, so maintaining per-hart counters avoids races.
+static uint64 g_ticks[NCPU] = {0};
+
 //
 // added @lab1_3
 //
 void handle_mtimer_trap() {
-  sprint("Ticks %d\n", g_ticks);
-  // TODO (lab1_3): increase g_ticks to record this "tick", and then clear the "SIP"
-  // field in sip register.
-  // hint: use write_csr to disable the SIP_SSIP bit in sip.
-  // panic( "lab1_3: increase g_ticks by one, and clear SIP field in sip register.\n" );
-  g_ticks++;
+  int hid = read_tp();
+  g_ticks[hid]++;
+  sprint("hartid = %d: Ticks %d\n", hid, g_ticks[hid]);
   write_csr(sip, read_csr(sip) & ~SIP_SSIP);
 }
 
@@ -56,6 +55,7 @@ void handle_mtimer_trap() {
 //
 void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
   sprint("handle_page_fault: %lx\n", stval);
+  int hid = read_tp();
   switch (mcause) {
     case CAUSE_STORE_PAGE_FAULT:{
       // TODO (lab2_3): implement the operations that solve the page fault to
@@ -63,7 +63,7 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
       // panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
-      pte_t *pte = page_walk((pagetable_t)(current->pagetable),
+      pte_t *pte = page_walk((pagetable_t)(current[hid]->pagetable),
                             ROUNDDOWN(stval, PGSIZE), 1);
       if(READ_PTE_COW(pte)) {
         uint64 old_pa = PTE2PA(*pte);  // 在 unmap 之前保存旧物理地址
@@ -72,9 +72,9 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
           // 还有其他进程引用该页，分配新页并复制内容
           void* new_pa = alloc_page();
           memmove(new_pa, (void*)old_pa, PGSIZE);
-          user_vm_unmap((pagetable_t)(current->pagetable), 
+          user_vm_unmap((pagetable_t)(current[hid]->pagetable), 
                     ROUNDDOWN(stval, PGSIZE), PGSIZE, 0);
-          user_vm_map((pagetable_t)(current->pagetable),
+          user_vm_map((pagetable_t)(current[hid]->pagetable),
                     ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)new_pa,
                     prot_to_type(PROT_WRITE | PROT_READ, 1));
           dec_page_refcount(old_pa); // 减少原页引用计数（用保存的旧地址）
@@ -86,16 +86,16 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
         break;
       }
 
-      if (stval < current->user_st_top - PGSIZE - 8 || stval >= current->user_st_top) {
+      if (stval < current[hid]->user_st_top - PGSIZE - 8 || stval >= current[hid]->user_st_top) {
         panic("this address is not available!");
       } 
 
       void *pa = alloc_page();
-      user_vm_map((pagetable_t)(current->pagetable),
+      user_vm_map((pagetable_t)(current[hid]->pagetable),
                 ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa,
                 prot_to_type(PROT_WRITE | PROT_READ, 1));
       
-      current -> user_st_top -= PGSIZE;
+      current[hid] -> user_st_top -= PGSIZE;
       break;
     }
     default:
@@ -108,15 +108,16 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
 // implements round-robin scheduling. added @lab3_3
 //
 void rrsched() {
+  int hid = read_tp();
   // TODO (lab3_3): implements round-robin scheduling.
   // hint: increase the tick_count member of current process by one, if it is bigger than
   // TIME_SLICE_LEN (means it has consumed its time slice), change its status into READY,
   // place it in the rear of ready queue, and finally schedule next process to run.
   // panic( "You need to further implement the timer handling in lab3_3.\n" );
-  if((++current->tick_count) >= TIME_SLICE_LEN) {
-    current->status = READY;
-    current->tick_count = 0;
-    insert_to_ready_queue(current);
+  if((++current[hid]->tick_count) >= TIME_SLICE_LEN) {
+    current[hid]->status = READY;
+    current[hid]->tick_count = 0;
+    insert_to_ready_queue(current[hid]);
     schedule();
   }
 }
@@ -126,6 +127,7 @@ void rrsched() {
 // in S-mode.
 //
 void smode_trap_handler(void) {
+  int hid = read_tp();
   // make sure we are in User mode before entering the trap handling.
   // we will consider other previous case in lab1_3 (interrupt).
   if ((read_csr(sstatus) & SSTATUS_SPP) != 0) panic("usertrap: not from user mode");
@@ -135,9 +137,9 @@ void smode_trap_handler(void) {
   // sprint("User pagetable was: 0x%lx\n", (uint64)current->pagetable);
   // sprint("Result: MMU can't auto-translate user addresses anymore!\n\n");
 
-  assert(current);
+  assert(current[hid]);
   // save user process counter.
-  current->trapframe->epc = read_csr(sepc);
+  current[hid]->trapframe->epc = read_csr(sepc);
 
   // if the cause of trap is syscall from user application.
   // read_csr() and CAUSE_USER_ECALL are macros defined in kernel/riscv.h
@@ -146,7 +148,7 @@ void smode_trap_handler(void) {
   // use switch-case instead of if-else, as there are many cases since lab2_3.
   switch (cause) {
     case CAUSE_USER_ECALL:
-      handle_syscall(current->trapframe);
+      handle_syscall(current[hid]->trapframe);
       break;
     case CAUSE_MTIMER_S_TRAP:
       handle_mtimer_trap();
