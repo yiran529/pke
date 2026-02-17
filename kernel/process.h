@@ -19,6 +19,16 @@ typedef struct trapframe_t {
   /* offset:272 */ uint64 kernel_satp;
 }trapframe;
 
+// added @lab1_challenge2
+// code file struct, including directory index and file name char pointer
+typedef struct {
+    uint64 dir; char *file;
+} code_file;
+// address-line number-file name table
+typedef struct {
+    uint64 addr, line, file;
+} addr_line;
+
 // riscv-pke kernel supports at most 32 processes
 #define NPROC 32
 // maximum number of pages in a process's heap
@@ -124,6 +134,12 @@ typedef struct process_t {
 
   // executable path, for backtrace etc.
   char exe_path[128];
+
+  // added @lab1_challenge2
+  char *debugline; char **dir; code_file *file; addr_line *line; int line_ind;
+
+  // kmalloc heap mark: saved before loading debug info, reset on process free
+  uint64 debug_heap_mark;
 }process;
 
 // switch to run user app

@@ -105,6 +105,7 @@ void do_panic(const char* s, ...) {
   va_list vl;
   va_start(vl, s); // macro to initialize vl to retrieve the additional arguments after s
 
+  // vprintk(s, vl);
   sprint(s, vl);
   shutdown(-1);
 

@@ -59,6 +59,7 @@ typedef enum elf_status_t {
 typedef struct elf_ctx_t {
   void *info;
   elf_header ehdr;
+  uint64 image_end;  // highest virtual address consumed inside the user image (for loader scratch)
 } elf_ctx;
 
 elf_status elf_init(elf_ctx *ctx, void *info);
@@ -100,4 +101,30 @@ typedef struct {
 
 int get_name_by_ra(elf_ctx* ctx, elf_section_header* section_headers, uint64 ra);
 
+// added @lab1_challenge2
+// elf section header
+typedef struct elf_sect_header_t{
+    uint32 name;
+    uint32 type;
+    uint64 flags;
+    uint64 addr;
+    uint64 offset;
+    uint64 size;
+    uint32 link;
+    uint32 info;
+    uint64 addralign;
+    uint64 entsize;
+} elf_sect_header;
+// compilation units header (in debug line section)
+typedef struct __attribute__((packed)) {
+    uint32 length;
+    uint16 version;
+    uint32 header_length;
+    uint8 min_instruction_length;
+    uint8 default_is_stmt;
+    int8 line_base;
+    uint8 line_range;
+    uint8 opcode_base;
+    uint8 std_opcode_lengths[12];
+} debug_header;
 #endif

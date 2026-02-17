@@ -263,6 +263,17 @@ int free_process( process* proc ) {
   // as it is different from regular OS, which needs to run 7x24.
   proc->status = ZOMBIE;
 
+  // reclaim kernel heap space used by this process's debug_line data
+  if (proc->debug_heap_mark != 0) {
+    kmalloc_reset(proc->debug_heap_mark);
+    proc->debug_heap_mark = 0;
+    proc->debugline = NULL;
+    proc->dir = NULL;
+    proc->file = NULL;
+    proc->line = NULL;
+    proc->line_ind = 0;
+  }
+
   return 0;
 }
 

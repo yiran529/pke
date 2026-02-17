@@ -21,7 +21,7 @@ ifneq (,)
   mabi := -mabi=$(if $(is_32bit),ilp32,lp64)
 endif
 
-CFLAGS        := -Wall -Werror  -fno-builtin -nostdlib -D__NO_INLINE__ -mcmodel=medany -g -Og -std=gnu99 -Wno-unused -Wno-attributes -fno-delete-null-pointer-checks -fno-PIE -fno-omit-frame-pointer $(march)
+CFLAGS        := -Wall -Werror -gdwarf-3  -fno-builtin -nostdlib -D__NO_INLINE__ -mcmodel=medany -g -Og -std=gnu99 -Wno-unused -Wno-attributes -fno-delete-null-pointer-checks -fno-PIE -fno-omit-frame-pointer $(march)
 COMPILE       	:= $(CC) -MMD -MP $(CFLAGS) $(SPROJS_INCLUDE)
 
 #---------------------	utils -----------------------
@@ -135,6 +135,12 @@ USER_BACKTRACE_CPPS 		:= user/app_print_backtrace.c user/user_lib.c
 USER_BACKTRACE_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_BACKTRACE_CPPS)))
 
 USER_BACKTRACE_TARGET 	:= $(HOSTFS_ROOT)/bin/app_print_backtrace
+
+USER_ERRORLINE_CPPS 		:= user/app_errorline.c user/user_lib.c
+
+USER_ERRORLINE_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ERRORLINE_CPPS)))
+
+USER_ERRORLINE_TARGET 	:= $(HOSTFS_ROOT)/bin/app_errorline
 #------------------------targets------------------------
 $(OBJ_DIR):
 	@-mkdir -p $(OBJ_DIR)	
@@ -153,7 +159,8 @@ $(OBJ_DIR):
 	@-mkdir -p $(dir $(USER_Q_OBJS))
 	@-mkdir -p $(dir $(USER_H_OBJS))
 	@-mkdir -p $(dir $(USER_BACKTRACE_OBJS))
-	
+	@-mkdir -p $(dir $(USER_ERRORLINE_OBJS))
+
 $(OBJ_DIR)/%.o : %.c
 	@echo "compiling" $<
 	@$(COMPILE) -c $< -o $@
@@ -250,15 +257,21 @@ $(USER_BACKTRACE_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_BACKTRACE_OBJS)
 	@$(COMPILE) --entry=main $(USER_BACKTRACE_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
 
+$(USER_ERRORLINE_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ERRORLINE_OBJS)
+	@echo "linking" $@	...	
+	-@mkdir -p $(HOSTFS_ROOT)/bin
+	@$(COMPILE) --entry=main $(USER_ERRORLINE_OBJS) $(UTIL_LIB) -o $@
+	@echo "User app has been built into" \"$@\"
+
 -include $(wildcard $(OBJ_DIR)/*/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*/*.d)
 
 .DEFAULT_GOAL := $(all)
 
-all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET)
+all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET) 
 .PHONY:all
 
-run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET)
+run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET) 
 	@echo "********************HUST PKE********************"
 	spike $(KERNEL_TARGET) /bin/app_shell
 

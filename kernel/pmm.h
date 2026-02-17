@@ -15,4 +15,10 @@ void inc_page_refcount(uint64 pa);
 void inc_page_refcount(uint64 pa);
 uint32 dec_page_refcount(uint64 pa); // return new count after decrement
 uint32 get_page_refcount(uint64 pa);
+
+// simple kernel bump allocator on pre-reserved contiguous physical memory
+void *kmalloc(uint64 size);
+// Save/restore heap position so debug data can be reclaimed when process exits.
+uint64 kmalloc_mark(void);
+void kmalloc_reset(uint64 mark);
 #endif

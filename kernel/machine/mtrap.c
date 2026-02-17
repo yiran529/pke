@@ -1,6 +1,7 @@
 #include "kernel/riscv.h"
 #include "kernel/process.h"
 #include "spike_interface/spike_utils.h"
+#include "util/string.h"
 
 static void handle_instruction_access_fault() { panic("Instruction access fault!"); }
 
@@ -33,6 +34,54 @@ static void handle_timer() {
 //
 void handle_mtrap() {
   uint64 mcause = read_csr(mcause);
+
+  // added @lab1_challenge2 : 处理非法指令异常，打印源代码行号信息
+  if(mcause != CAUSE_MTIMER) {
+      uint64 mepc = read_csr(mepc);
+
+      // 找到对应的源代码行号
+      addr_line *lines = current->line;
+      int count = current->line_ind;
+      addr_line *hit = NULL;
+      for (int i = 0; i < count; ++i) {
+        if (lines[i].addr > mepc) break;
+        hit = &lines[i];
+      }
+      if (!hit) { /* 没命中 */ }
+
+      code_file *cur_file = &(current->file)[hit->file];
+      char* dir = (current->dir)[cur_file->dir];
+      char* file = cur_file->file;
+      sprint("Runtime error at %s/%s:%d\n", dir, file, hit->line);
+
+      char fullpath[256] = {'\0'};
+      strcpy(fullpath, dir);
+      strcat(fullpath, "/");
+      strcat(fullpath, file);
+      spike_file_t *src = spike_file_open(fullpath, O_RDONLY, 0);
+
+      char line[500];
+      size_t offset = 0;
+      int cur_line = 0;
+      char ch;
+      while(spike_file_read(src, &ch, 1) == 1) {
+        if (ch == '\n') {
+          line[offset] = '\0';
+          offset = 0;
+          cur_line++;
+          if (cur_line == hit->line) {
+            sprint("%s\n", line);
+            break;
+          } else {
+            // do nothing
+          }
+        } else {
+          line[offset++] = ch;
+        }
+      }
+      spike_file_close(src);
+  }
+
   switch (mcause) {
     case CAUSE_MTIMER:
       handle_timer();

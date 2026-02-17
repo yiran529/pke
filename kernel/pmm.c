@@ -29,6 +29,12 @@ static uint32 *page_refcount = 0; // 指向 refcount 数组
 static uint64 nphys_pages = 0;    // 物理页总数
 static uint64 refcount_pages = 0; // 用于存放数组所占页数
 
+// kernel heap: contiguous physical memory reserved before free page list creation
+#define KERNEL_HEAP_PAGES 1024  // 4MB kernel heap
+static uint64 kheap_start;
+static uint64 kheap_current;
+static uint64 kheap_end;
+
 
 //
 // actually creates the freepage list. each page occupies 4KB (PGSIZE), i.e., small page.
@@ -121,6 +127,15 @@ void pmm_init() {
   sprint("finish setting up page refcount array, nphys_pages: %ld, "
     "refcount_pages: %ld \n", nphys_pages, refcount_pages);
 
+  // 5) Reserve contiguous kernel heap for kmalloc (before free page list creation)
+  kheap_start = free_mem_start_addr;
+  kheap_current = kheap_start;
+  kheap_end = kheap_start + KERNEL_HEAP_PAGES * PGSIZE;
+  free_mem_start_addr = kheap_end;
+  memset((void *)kheap_start, 0, KERNEL_HEAP_PAGES * PGSIZE);
+  sprint("Kernel heap: [0x%lx, 0x%lx], size: %ld bytes\n",
+    kheap_start, kheap_end, (uint64)(KERNEL_HEAP_PAGES * PGSIZE));
+
   // 打印空闲物理内存范围（起始地址已向上对齐为页边界，结束地址为最后可用字节）
   sprint("free physical memory address: [0x%lx, 0x%lx] \n", free_mem_start_addr,
     free_mem_end_addr - 1);
@@ -135,6 +150,33 @@ void pmm_init() {
   // - 如果将来需要为内核元数据（例如页引用计数数组 page_refcount）预留空间，
   //   应在调用 create_freepage_list 之前改变 free_mem_start_addr，从而保护这些页不被回收。
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
+}
+
+//
+// kmalloc: simple bump allocator on the pre-reserved contiguous kernel heap.
+// TODO Memory allocated by kmalloc is never freed (acceptable for PKE's debug info).
+//
+void *kmalloc(uint64 size) {
+  // align to 8 bytes
+  size = (size + 7) & ~(uint64)7;
+  if (kheap_current + size > kheap_end)
+    panic("kmalloc: kernel heap exhausted (requested %ld bytes, remain %ld)\n",
+          size, kheap_end - kheap_current);
+  void *p = (void *)kheap_current;
+  kheap_current += size;
+  return p;
+}
+
+// Save the current heap position (to allow bulk rollback later).
+uint64 kmalloc_mark(void) {
+  return kheap_current;
+}
+
+// Reset the heap pointer back to a previously saved mark.
+// All kmalloc allocations since that mark are effectively freed.
+void kmalloc_reset(uint64 mark) {
+  if (mark >= kheap_start && mark <= kheap_end)
+    kheap_current = mark;
 }
 
 // helper: convert physical address to page index (based on DRAM_BASE)
