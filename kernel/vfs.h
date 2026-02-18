@@ -18,6 +18,10 @@
 /**** vfs initialization function ****/
 int vfs_init();
 
+/**** vfs lock for multicore safety ****/
+void vfs_lock();
+void vfs_unlock();
+
 /**** vfs interfaces ****/
 
 // device interfaces

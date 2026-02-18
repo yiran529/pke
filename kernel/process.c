@@ -18,6 +18,20 @@
 #include "sched.h"
 #include "spike_interface/spike_utils.h"
 
+// spinlock protecting the process pool (procs[]) during allocation
+static volatile int g_proc_lock = 0;
+
+static inline void proc_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_proc_lock) : "memory");
+  } while (tmp != 0);
+}
+
+static inline void proc_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_proc_lock) : "memory");
+}
+
 //Two functions defined in kernel/usertrap.S
 extern char smode_trap_vector[];
 extern void return_to_user(trapframe *, uint64 satp);
@@ -99,7 +113,9 @@ void init_proc_pool() {
 process* alloc_process() {
   int hid = read_tp();
 
-  // locate the first usable process structure
+  // locate the first usable process structure (under lock to avoid two harts
+  // grabbing the same slot)
+  proc_lock();
   sprint("[DEBUG] hartid = %d: Entering alloc_process to find a free process structure.\n", hid);
   int i;
 
@@ -107,9 +123,14 @@ process* alloc_process() {
     if( procs[i].status == FREE ) break;
 
   if( i>=NPROC ){
+    proc_unlock();
     panic( "cannot find any free process structure.\n" );
     return 0;
   }
+
+  // mark the slot as allocated before releasing the lock so no other hart picks it
+  procs[i].status = BLOCKED;
+  proc_unlock();
 
   // init proc[i]'s vm space
   procs[i].trapframe = (trapframe *)alloc_page();  //trapframe, used to save context

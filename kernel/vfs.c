@@ -16,6 +16,20 @@ struct device *vfs_dev_list[MAX_VFS_DEV];     // system device list in vfs layer
 struct hash_table dentry_hash_table;
 struct hash_table vinode_hash_table;
 
+// coarse-grained spinlock protecting VFS hash tables, ref counts, and dentry trees
+volatile int g_vfs_lock = 0;
+
+void vfs_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_vfs_lock) : "memory");
+  } while (tmp != 0);
+}
+
+void vfs_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_vfs_lock) : "memory");
+}
+
 //
 // initializes the dentry hash list and vinode hash list
 //
@@ -109,6 +123,7 @@ struct super_block *vfs_mount(const char *dev_name, int mnt_type) {
 // return: the file pointer to the opened file.
 //
 struct file *vfs_open(const char *path, int flags) {
+  vfs_lock();
   struct dentry *parent = vfs_root_dentry; // we start the path lookup from root.
   char miss_name[MAX_PATH_LEN];
 
@@ -127,6 +142,7 @@ struct file *vfs_open(const char *path, int flags) {
       // a missing directory exists in the path
       if (strcmp(miss_name, basename) != 0) {
         sprint("vfs_open: cannot create file in a non-exist directory!\n");
+        vfs_unlock();
         return NULL;
       }
 
@@ -141,12 +157,14 @@ struct file *vfs_open(const char *path, int flags) {
       hash_put_vinode(new_inode); 
     } else {
       sprint("vfs_open: cannot find the file!\n");
+      vfs_unlock();
       return NULL;
     }
   }
 
   if (file_dentry->dentry_inode->type != FILE_I) {
     sprint("vfs_open: cannot open a directory!\n");
+    vfs_unlock();
     return NULL;
   }
 
@@ -181,6 +199,7 @@ struct file *vfs_open(const char *path, int flags) {
     }
   }
 
+  vfs_unlock();
   return file;
 }
 
@@ -260,6 +279,7 @@ int vfs_disk_stat(struct file *file, struct istat *istat) {
 // return: -1 on failure, 0 on success.
 //
 int vfs_link(const char *oldpath, const char *newpath) {
+  vfs_lock();
   struct dentry *parent = vfs_root_dentry;
   char miss_name[MAX_PATH_LEN];
 
@@ -268,11 +288,13 @@ int vfs_link(const char *oldpath, const char *newpath) {
       lookup_final_dentry(oldpath, &parent, miss_name);
   if (!old_file_dentry) {
     sprint("vfs_link: cannot find the file!\n");
+    vfs_unlock();
     return -1;
   }
 
   if (old_file_dentry->dentry_inode->type != FILE_I) {
     sprint("vfs_link: cannot link a directory!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -283,6 +305,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
       lookup_final_dentry(newpath, &parent, miss_name);
   if (new_file_dentry) {
     sprint("vfs_link: the new file already exists!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -290,6 +313,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
   get_base_name(newpath, basename);
   if (strcmp(miss_name, basename) != 0) {
     sprint("vfs_link: cannot create file in a non-exist directory!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -297,11 +321,12 @@ int vfs_link(const char *oldpath, const char *newpath) {
   new_file_dentry = alloc_vfs_dentry(basename, old_file_dentry->dentry_inode, parent);
   int err =
       viop_link(parent->dentry_inode, new_file_dentry, old_file_dentry->dentry_inode);
-  if (err) return -1;
+  if (err) { vfs_unlock(); return -1; }
 
   // make a new dentry for the new link
   hash_put_dentry(new_file_dentry);
 
+  vfs_unlock();
   return 0;
 }
 
@@ -310,6 +335,7 @@ int vfs_link(const char *oldpath, const char *newpath) {
 // return: -1 on failure, 0 on success.
 //
 int vfs_unlink(const char *path) {
+  vfs_lock();
   struct dentry *parent = vfs_root_dentry;
   char miss_name[MAX_PATH_LEN];
 
@@ -317,23 +343,26 @@ int vfs_unlink(const char *path) {
   struct dentry *file_dentry = lookup_final_dentry(path, &parent, miss_name);
   if (!file_dentry) {
     sprint("vfs_unlink: cannot find the file!\n");
+    vfs_unlock();
     return -1;
   }
 
   if (file_dentry->dentry_inode->type != FILE_I) {
     sprint("vfs_unlink: cannot unlink a directory!\n");
+    vfs_unlock();
     return -1;
   }
 
   if (file_dentry->d_ref > 0) {
     sprint("vfs_unlink: the file is still opened!\n");
+    vfs_unlock();
     return -1;
   }
 
   // do the real unlink
   struct vinode *unlinked_vinode = file_dentry->dentry_inode;
   int err = viop_unlink(parent->dentry_inode, file_dentry, unlinked_vinode);
-  if (err) return -1;
+  if (err) { vfs_unlock(); return -1; }
 
   // remove the dentry from the hash table
   hash_erase_dentry(file_dentry);
@@ -351,6 +380,7 @@ int vfs_unlink(const char *path) {
   }
   
 
+  vfs_unlock();
   return 0;
 }
 
@@ -358,8 +388,10 @@ int vfs_unlink(const char *path) {
 // close a file at vfs layer.
 //
 int vfs_close(struct file *file) {
+  vfs_lock();
   if (file->f_dentry->dentry_inode->type != FILE_I) {
     sprint("vfs_close: cannot close a directory!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -392,6 +424,7 @@ int vfs_close(struct file *file) {
   }
 
   file->status = FD_NONE;
+  vfs_unlock();
   return 0;
 }
 
@@ -399,6 +432,7 @@ int vfs_close(struct file *file) {
 // open a dir at vfs layer. the directory must exist on disk.
 //
 struct file *vfs_opendir(const char *path) {
+  vfs_lock();
   struct dentry *parent = vfs_root_dentry;
   char miss_name[MAX_PATH_LEN];
 
@@ -407,6 +441,7 @@ struct file *vfs_opendir(const char *path) {
 
   if (!file_dentry || file_dentry->dentry_inode->type != DIR_I) {
     sprint("vfs_opendir: cannot find the direntry!\n");
+    vfs_unlock();
     return NULL;
   }
 
@@ -422,6 +457,7 @@ struct file *vfs_opendir(const char *path) {
     }
   }
 
+  vfs_unlock();
   return file;
 }
 
@@ -443,6 +479,7 @@ int vfs_readdir(struct file *file, struct dir *dir) {
 // and its parent directory must exist.
 //
 int vfs_mkdir(const char *path) {
+  vfs_lock();
   struct dentry *parent = vfs_root_dentry;
   char miss_name[MAX_PATH_LEN];
 
@@ -450,6 +487,7 @@ int vfs_mkdir(const char *path) {
   struct dentry *file_dentry = lookup_final_dentry(path, &parent, miss_name);
   if (file_dentry) {
     sprint("vfs_mkdir: the directory already exists!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -457,6 +495,7 @@ int vfs_mkdir(const char *path) {
   get_base_name(path, basename);
   if (strcmp(miss_name, basename) != 0) {
     sprint("vfs_mkdir: cannot create directory in a non-exist directory!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -466,6 +505,7 @@ int vfs_mkdir(const char *path) {
   if (!new_dir_inode) {
     free_page(new_dentry);
     sprint("vfs_mkdir: cannot create directory!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -475,6 +515,7 @@ int vfs_mkdir(const char *path) {
   hash_put_vinode(new_dir_inode);
 
   sprint("------vfs_mkdir inum: %d, path: %s\n", new_dir_inode->inum, path);
+  vfs_unlock();
   return 0;
 }
 
@@ -482,8 +523,10 @@ int vfs_mkdir(const char *path) {
 // close a directory at vfs layer
 //
 int vfs_closedir(struct file *file) {
+  vfs_lock();
   if (file->f_dentry->dentry_inode->type != DIR_I) {
     sprint("vfs_closedir: cannot close a file!\n");
+    vfs_unlock();
     return -1;
   }
 
@@ -501,6 +544,7 @@ int vfs_closedir(struct file *file) {
       sprint("vfs_closedir: hook closedir failed!\n");
     }
   }
+  vfs_unlock();
   return 0;
 }
 
@@ -515,12 +559,12 @@ struct dentry *lookup_final_dentry(const char *path, struct dentry **parent,
   strcpy(path_copy, path);
 
   // split the path, and retrieves a token at a time.
-  // note: strtok() uses a static (local) variable to store the input path
-  // string at the first time it is called. thus it can out a token each time.
+  // note: strtok_r() is the reentrant version of strtok(), safe for multicore.
   // for example, when input path is: /RAMDISK0/test_dir/ramfile2
-  // strtok() outputs three tokens: 1)RAMDISK0, 2)test_dir and 3)ramfile2
+  // strtok_r() outputs three tokens: 1)RAMDISK0, 2)test_dir and 3)ramfile2
   // at its three continuous invocations.
-  char *token = strtok(path_copy, "/");
+  char *saveptr = NULL;
+  char *token = strtok_r(path_copy, "/", &saveptr);
   struct dentry *this = *parent;
 
   while (token != NULL) {
@@ -556,7 +600,7 @@ struct dentry *lookup_final_dentry(const char *path, struct dentry **parent,
     }
 
     // get next token
-    token = strtok(NULL, "/");
+    token = strtok_r(NULL, "/", &saveptr);
   }
   return this;
 }
@@ -568,11 +612,12 @@ void get_base_name(const char *path, char *base_name) {
   char path_copy[MAX_PATH_LEN];
   strcpy(path_copy, path);
 
-  char *token = strtok(path_copy, "/");
+  char *saveptr = NULL;
+  char *token = strtok_r(path_copy, "/", &saveptr);
   char *last_token = NULL;
   while (token != NULL) {
     last_token = token;
-    token = strtok(NULL, "/");
+    token = strtok_r(NULL, "/", &saveptr);
   }
 
   strcpy(base_name, last_token);

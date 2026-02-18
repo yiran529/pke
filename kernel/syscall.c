@@ -52,44 +52,16 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 // implement the SYS_user_exit syscall
 //
 ssize_t sys_user_exit(uint64 code) {
-  // sprint("hartid = ?: User exit with code:%d.\n", code);
-  // // in lab1, PKE considers only one app (one process). 
-  // // therefore, shutdown the system when the app calls exit()
-  // sprint("hartid = ?: shutdown with code:%d.\n", code);
-  // shutdown(code);
   int hid = read_tp();
   sprint("hartid = %d: User exit with code:%d.\n", hid, code);
 
-  // Cooperative shutdown: in multicore we must wait until all harts finish before
-  // calling shutdown, otherwise one hart would terminate others prematurely.
-  static volatile int exit_count = 0;
+  // Mark the current process as ZOMBIE and schedule the next one.
+  // When no runnable processes remain, schedule() will call shutdown().
+  current[hid]->status = ZOMBIE;
+  schedule();
 
-  // atomic add: every hart that exits increments the counter. Using amoor to avoid
-  // needing a lock in this simple setting.
-  int old;
-  asm volatile("amoadd.w %0, %1, (%2)"
-               : "=r"(old)
-               : "r"(1), "r"(&exit_count)
-               : "memory");
-
-  int newval = old + 1;
-  if (hid == 0) {
-    // hart0 waits until all harts report exit, then shuts down the system.
-    while (newval < NCPU) {
-      newval = exit_count; // busy-wait; simple and sufficient for this lab
-    }
-    sprint("hartid = %d: shutdown with code:%d.\\n", hid, code);
-    shutdown(code);
-  }
-
-  // After reporting exit, disable further timer interrupts on this hart to avoid being
-  // re-entered while parked. Clear S-mode enables and pending bits (accessible in S).
-  write_csr(sie, 0);
-  write_csr(sip, 0);
-
-  // Non-zero harts just park; hart0 will eventually power off when counter reaches
-  // NCPU.
-  while (1) asm volatile("wfi");
+  // should never reach here
+  return 0;
 }
 
 // added @lab1_challenge1
@@ -347,7 +319,22 @@ int first_use = 0;
 process* queue[ MAX_SEMAPHORES ][ 10 ]; // 每个信号量对应的阻塞队列
 int queue_lengths[ MAX_SEMAPHORES ] = {0}; // 每个信号量对应的阻塞队列长度
 
+// spinlock protecting semaphore data structures
+static volatile int g_sem_lock = 0;
+
+static inline void sem_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_sem_lock) : "memory");
+  } while (tmp != 0);
+}
+
+static inline void sem_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_sem_lock) : "memory");
+}
+
 ssize_t sys_user_sem_new(int count) {
+  sem_lock();
    if(first_use == 0) {
        for(int i = 0; i < MAX_SEMAPHORES; i++) {
            semaphores[i] = -1; // -1 indicates unused semaphore
@@ -357,9 +344,11 @@ ssize_t sys_user_sem_new(int count) {
   for(int i = 0; i < MAX_SEMAPHORES; i++) {
       if(semaphores[i] == -1) {
           semaphores[i] = count;
+          sem_unlock();
           return i; // return semaphore id
       }
   }
+  sem_unlock();
   return -1; // no available semaphore
 }
 
@@ -369,15 +358,13 @@ int sys_user_sem_P(int sem) {
         return -1; // invalid semaphore
     }
 
-    // sprint("[DEBUG] P operation on semaphore %d, val = %d\n", sem, semaphores[sem]);
     while(1) {
+      sem_lock();
       if(semaphores[sem] > 0) {
         semaphores[sem]--;
+        sem_unlock();
         return 1;
       } else {
-        // sprint("[DEBUG] Semaphore %d is not available, blocking current[hid] process %d\n", sem, current[hid]->pid);
-        // insert into semaphore's blocked queue
-        // block the current[hid] process
         current[hid] -> status = BLOCKED;
 
         // make sure the process is not already in the blocked queue
@@ -393,6 +380,7 @@ int sys_user_sem_P(int sem) {
         }
 
         current[hid]->trapframe->epc -= 4; // 让被阻塞的进程在恢复时重新执行P操作
+        sem_unlock();
         schedule();
       }
     }
@@ -405,27 +393,25 @@ int sys_user_sem_V(int sem) {
         return -1; // invalid semaphore
     }
 
-    // sprint("[DEBUG] V operation on semaphore %d, val = %d\n", sem, semaphores[sem]);
+    sem_lock();
     semaphores[sem]++;
-    // unblock a process from semaphore's blocked queue
 
     if(queue_lengths[sem] == 0) {
+        sem_unlock();
         return 1; // no process to wake up
     }
 
     process* process_to_wake = queue[sem][0];
     if (process_to_wake == NULL) {
+        sem_unlock();
         return 1; 
     }
 
-    // sprint("[DEBUG] Waking up process %d from semaphore %d's blocked queue\n", process_to_wake->pid, sem);
-    // shift the queue //TODO 可以考虑使用循环队列稍微提升性能
     for(int i = 1; i < queue_lengths[sem]; i++) {
         queue[sem][i - 1] = queue[sem][i];
     }
     queue_lengths[sem]--;
-    // sprint("[DEBUG] Semaphore %d blocked queue length: %d\n", sem, queue_lengths[sem]);
-    // find the process and set it to READY
+    sem_unlock();
     insert_to_ready_queue(process_to_wake);
     return 1;
 }

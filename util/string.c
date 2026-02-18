@@ -98,6 +98,29 @@ char* strtok(char* str, const char* delim) {
   return start;
 }
 
+char* strtok_r(char* str, const char* delim, char **saveptr) {
+  if (str != NULL) *saveptr = str;
+  if (*saveptr == NULL) return NULL;
+
+  char* start = *saveptr;
+  while (*start != '\0' && strchr(delim, *start) != NULL) start++;
+
+  if (*start == '\0') {
+    *saveptr = NULL;
+    return NULL;
+  }
+
+  char* end = start;
+  while (*end != '\0' && strchr(delim, *end) == NULL) end++;
+
+  if (*end != '\0') {
+    *end = '\0';
+    *saveptr = end + 1;
+  } else
+    *saveptr = NULL;
+  return start;
+}
+
 char *strcat(char *dst, const char *src) {
   strcpy(dst + strlen(dst), src);
   return dst;

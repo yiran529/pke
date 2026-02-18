@@ -7,16 +7,32 @@
 
 process* ready_queue_head = NULL;
 
+// spinlock protecting the ready queue
+static volatile int g_sched_lock = 0;
+
+static inline void sched_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_sched_lock) : "memory");
+  } while (tmp != 0);
+}
+
+static inline void sched_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_sched_lock) : "memory");
+}
+
 //
 // insert a process, proc, into the END of ready queue.
 //
 void insert_to_ready_queue( process* proc ) {
+  sched_lock();
   sprint( "going to insert process %d to ready queue.\n", proc->pid );
   // if the queue is empty in the beginning
   if( ready_queue_head == NULL ){
     proc->status = READY;
     proc->queue_next = NULL;
     ready_queue_head = proc;
+    sched_unlock();
     return;
   }
 
@@ -24,14 +40,15 @@ void insert_to_ready_queue( process* proc ) {
   process *p;
   // browse the ready queue to see if proc is already in-queue
   for( p=ready_queue_head; p->queue_next!=NULL; p=p->queue_next )
-    if( p == proc ) return;  //already in queue
+    if( p == proc ) { sched_unlock(); return; }  //already in queue
 
   // p points to the last element of the ready queue
-  if( p==proc ) return;
+  if( p==proc ) { sched_unlock(); return; }
   p->queue_next = proc;
   proc->status = READY;
   proc->queue_next = NULL;
 
+  sched_unlock();
   return;
 }
 
@@ -45,7 +62,10 @@ extern process procs[NPROC];
 void schedule() {
   int hid = read_tp();
   sprint( "hartid = %d: will schedule a process to run.\n", hid );
+
+  sched_lock();
   if ( !ready_queue_head ){
+    sched_unlock();
     // by default, if there are no ready process, and all processes are in the status of
     // FREE and ZOMBIE, we should shutdown the emulated RISC-V machine.
     int should_shutdown = 1;
@@ -70,6 +90,8 @@ void schedule() {
   ready_queue_head = ready_queue_head->queue_next;
 
   current[hid]->status = RUNNING;
+  sched_unlock();
+
   sprint( "going to schedule process %d to run.\n", current[hid]->pid );
   switch_to( current[hid] );
 }

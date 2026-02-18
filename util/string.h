@@ -10,6 +10,7 @@ int strcmp(const char* s1, const char* s2);
 char *strcpy(char* dest, const char* src);
 char *strchr(const char *p, int ch);
 char *strtok(char* str, const char* delim);
+char *strtok_r(char* str, const char* delim, char **saveptr);
 char *strcat(char *dst, const char *src);
 long atol(const char* str);
 void *memmove(void* dst, const void* src, size_t n);

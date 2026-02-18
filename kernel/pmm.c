@@ -176,6 +176,20 @@ void pmm_init() {
   create_freepage_list(free_mem_start_addr, free_mem_end_addr);
 }
 
+// spinlock protecting the kernel heap bump allocator
+static volatile int g_kheap_lock = 0;
+
+static inline void kheap_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_kheap_lock) : "memory");
+  } while (tmp != 0);
+}
+
+static inline void kheap_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_kheap_lock) : "memory");
+}
+
 //
 // kmalloc: simple bump allocator on the pre-reserved contiguous kernel heap.
 // TODO Memory allocated by kmalloc is never freed (acceptable for PKE's debug info).
@@ -183,24 +197,33 @@ void pmm_init() {
 void *kmalloc(uint64 size) {
   // align to 8 bytes
   size = (size + 7) & ~(uint64)7;
-  if (kheap_current + size > kheap_end)
+  kheap_lock();
+  if (kheap_current + size > kheap_end) {
+    kheap_unlock();
     panic("kmalloc: kernel heap exhausted (requested %ld bytes, remain %ld)\n",
           size, kheap_end - kheap_current);
+  }
   void *p = (void *)kheap_current;
   kheap_current += size;
+  kheap_unlock();
   return p;
 }
 
 // Save the current heap position (to allow bulk rollback later).
 uint64 kmalloc_mark(void) {
-  return kheap_current;
+  kheap_lock();
+  uint64 m = kheap_current;
+  kheap_unlock();
+  return m;
 }
 
 // Reset the heap pointer back to a previously saved mark.
 // All kmalloc allocations since that mark are effectively freed.
 void kmalloc_reset(uint64 mark) {
+  kheap_lock();
   if (mark >= kheap_start && mark <= kheap_end)
     kheap_current = mark;
+  kheap_unlock();
 }
 
 // helper: convert physical address to page index (based on DRAM_BASE)

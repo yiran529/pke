@@ -56,7 +56,8 @@ int normalize_path(char* path) {
   int tokens_count = 0;
 
   // collect dentry names
-  char* token = strtok(path, "/");
+  char *saveptr = NULL;
+  char* token = strtok_r(path, "/", &saveptr);
   while(token != NULL) {
     // sprint("[DEBUG] normalize_path: token: %s\n", token);
     if(strcmp(token, ".") == 0) {
@@ -67,11 +68,11 @@ int normalize_path(char* path) {
       } // else do nothing
     } else if(token[0] == '\0') {
       // skip throught this situation
-      // 处理“//”这样的情况，虽然这种路径是错的，但这里暂时不实现异常处理
+      // 处理"//"这样的情况，虽然这种路径是错的，但这里暂时不实现异常处理
     } else {
       strcpy(tokens[tokens_count++], token);
     }
-    token = strtok(NULL, "/");
+    token = strtok_r(NULL, "/", &saveptr);
   }
 
   // sprint("[DEBUG] normalize_path: tokens_count: %d\n", tokens_count);
@@ -341,17 +342,18 @@ int do_rcwd(char* path){
 }
 
 int do_ccwd(char * path, struct dentry** cwd){
-  // sprint("[DEBUG] do_ccwd: changing cwd to %s\n", path);
   char resolved_path[MAX_PATH_LEN];
   resolve_path(path, resolved_path, *cwd);
-  // sprint("[DEBUG] do_ccwd: resolved path: %s\n", path);
+  vfs_lock();
   struct dentry* start = vfs_root_dentry;
   char miss[MAX_PATH_LEN];
   struct dentry* d = lookup_final_dentry(resolved_path, &start, miss);
   if(!d || d->dentry_inode->type != DIR_I) {
     sprint("do_ccwd: cannot change cwd to a non-exist directory!\n");
+    vfs_unlock();
     return -1;
   }
   *cwd = d;
+  vfs_unlock();
   return 0;
 }
