@@ -17,12 +17,16 @@
 #include "ramdev.h"
 #include "kernel.h"
 #include "config.h"
+#include "sync_utils.h"
 
 //
 // trap_sec_start points to the beginning of S-mode trap segment (i.e., the entry point of
 // S-mode trap vector). added @lab2_1
 //
 extern char trap_sec_start[];
+
+// Barrier to ensure only one hart performs one-time S-mode init, others wait.
+static volatile int g_s_init_barrier = 0;
 
 //
 // turn on paging. added @lab2_1
@@ -87,28 +91,35 @@ int s_start(void) {
   // note, the code still works in Bare mode when calling pmm_init() and kern_vm_init().
   write_csr(satp, 0);
 
-  // init phisical memory manager
-  pmm_init();
+  if (hid == 0) {
+    // init phisical memory manager
+    pmm_init();
 
-  // build the kernel page table
-  kern_vm_init();
+    // build the kernel page table
+    kern_vm_init();
+
+    // added @lab3_1
+    init_proc_pool();
+
+    // init file system, added @lab4_1
+    fs_init();
+
+    // the code now formally works in paging mode, meaning the page table is now in use.
+    sprint("kernel page table is on \n");
+  }
+  
+  // synchronize: secondary harts wait for hart 0 to finish setup
+  sync_barrier(&g_s_init_barrier, NCPU);
 
   // now, switch to paging mode by turning on paging (SV39)
   enable_paging();
-  // the code now formally works in paging mode, meaning the page table is now in use.
-  sprint("kernel page table is on \n");
-
-  // added @lab3_1
-  init_proc_pool();
-
-  // init file system, added @lab4_1
-  fs_init();
 
   sprint("hartid = %d: Switch to user mode...\n", hid);
 
-  uint64 hartid = 0;
+  uint64 hartid = hid;
   
   vm_alloc_stage[hartid] = 1;
+
   // the application code (elf) is first loaded into memory, and then put into execution
   // added @lab3_1
   insert_to_ready_queue( load_user_program() );

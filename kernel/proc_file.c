@@ -172,8 +172,9 @@ struct file *get_opened_file(int fd) {
   struct file *pfile = NULL;
 
   // browse opened file list to locate the fd
+  int hid = read_tp();
   for (int i = 0; i < MAX_FILES; ++i) {
-    pfile = &(current->pfiles->opened_files[i]);  // file entry
+    pfile = &(current[hid]->pfiles->opened_files[i]);  // file entry
     if (i == fd) break;
   }
   if (pfile == NULL) panic("do_read: invalid fd!\n");
@@ -185,25 +186,26 @@ struct file *get_opened_file(int fd) {
 // return: -1 on failure; non-zero file-descriptor on success.
 //
 int do_open(char *pathname, int flags, struct dentry* cwd) {
+  int hid = read_tp();
   char resolved_path[MAX_PATH_LEN];
   resolve_path(pathname, resolved_path, cwd);  
 
   struct file *opened_file = NULL;
   if ((opened_file = vfs_open(resolved_path, flags)) == NULL) return -1;
   int fd = 0;
-  if (current->pfiles->nfiles >= MAX_FILES) {
+  if (current[hid]->pfiles->nfiles >= MAX_FILES) {
     panic("do_open: no file entry for current process!\n");
   }
   struct file *pfile;
   for (fd = 0; fd < MAX_FILES; ++fd) {
-    pfile = &(current->pfiles->opened_files[fd]);
+    pfile = &(current[hid]->pfiles->opened_files[fd]);
     if (pfile->status == FD_NONE) break;
   }
 
   // initialize this file structure
   memcpy(pfile, opened_file, sizeof(struct file));
 
-  ++current->pfiles->nfiles;
+  ++current[hid]->pfiles->nfiles;
   return fd;
 }
 
@@ -273,6 +275,7 @@ int do_close(int fd) {
 // return: the fd of the directory file
 //
 int do_opendir(char *pathname, struct dentry* cwd) {
+  int hid = read_tp();
   char resolved_path[MAX_PATH_LEN];
   resolve_path(pathname, resolved_path, cwd);
 
@@ -281,7 +284,7 @@ int do_opendir(char *pathname, struct dentry* cwd) {
   int fd = 0;
   struct file *pfile;
   for (fd = 0; fd < MAX_FILES; ++fd) {
-    pfile = &(current->pfiles->opened_files[fd]);
+    pfile = &(current[hid]->pfiles->opened_files[fd]);
     if (pfile->status == FD_NONE) break;
   }
   if (pfile->status != FD_NONE)  // no free entry
@@ -290,7 +293,7 @@ int do_opendir(char *pathname, struct dentry* cwd) {
   // initialize this file structure
   memcpy(pfile, opened_file, sizeof(struct file));
 
-  ++current->pfiles->nfiles;
+  ++current[hid]->pfiles->nfiles;
   return fd;
 }
 
@@ -333,7 +336,8 @@ int do_unlink(char *path) {
 
 int do_rcwd(char* path){
   // Build full path from root by traversing parent chain
-  return build_absolute_path_from_dentry(current->pfiles->cwd, path);
+  int hid = read_tp();
+  return build_absolute_path_from_dentry(current[hid]->pfiles->cwd, path);
 }
 
 int do_ccwd(char * path, struct dentry** cwd){

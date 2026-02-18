@@ -313,13 +313,14 @@ elf_status elf_load(elf_ctx *ctx) {
 //
 void load_bincode_from_host_elf(process *p, char *filename) {
   // sprint("Application: %s\n", filename);
-  sprint("hartid = ?: Application: %s\n", filename);
+  int hid = read_tp();
+  sprint("hartid = %d: Application: %s\n", hid, filename);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
   // elf_info is defined above, used to tie the elf file and its corresponding process.
   elf_info info;
-  sprint("filename: %s\n", filename);
+  sprint("hartid = %d: filename: %s\n", hid, filename);
   info.f = vfs_open(filename, O_RDONLY);
   info.p = p;
   // IS_ERR_VALUE is a macro defined in spike_interface/spike_htif.h
@@ -347,7 +348,7 @@ void load_bincode_from_host_elf(process *p, char *filename) {
   vfs_close( info.f );
 
   // sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
-  sprint("hartid = ?: Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  sprint("hartid = %d: Application program entry point (virtual address): 0x%lx\n", hid, p->trapframe->epc);
 }
 
 /* Below are helper funcion for implmentation of exec.
@@ -460,8 +461,9 @@ elf_status elf_load_vfs(elf_ctx *ctx) {
 // load the elf of user application, by using the spike file interface.
 //
 void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
+  int hid = read_tp();
   // sprint("Application: %s\n", pathname);
-  sprint("hartid = ?: Application: %s\n", pathname);
+  sprint("hartid = %d: Application: %s\n", hid, pathname);
 
   //elf loading. elf_ctx is defined in kernel/elf.h, used to track the loading process.
   elf_ctx elfloader;
@@ -495,7 +497,7 @@ void load_bincode_from_host_elf_for_exec(process *p, char* pathname) {
   vfs_close( info.f );
 
   // sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
-  sprint("hartid = ?: Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  sprint("hartid = %d: Application program entry point (virtual address): 0x%lx\n", hid, p->trapframe->epc);
 }
 
 // added @lab1_challenge1

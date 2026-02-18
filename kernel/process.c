@@ -41,6 +41,8 @@ void switch_to(process* proc) {
   assert(proc);
   int hid = read_tp();
   current[hid] = proc;
+  // mark that subsequent allocations come from user space on this hart
+  vm_alloc_stage[hid] = 1;
 
   // write the smode_trap_vector (64-bit func. address) defined in kernel/strap_vector.S
   // to the stvec privilege register, such that trap handler pointed by smode_trap_vector
@@ -120,6 +122,7 @@ process* alloc_process() {
   procs[i].kstack = (uint64)alloc_page() + PGSIZE;   //user kernel stack top
   uint64 user_stack = (uint64)alloc_page();       //phisical address of user stack bottom
   procs[i].trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+  procs[i].trapframe->regs.tp = hid;        //store hartid in tp register
 
   // allocates a page to record memory regions (segments)
   procs[i].mapped_info = (mapped_region*)alloc_page();
@@ -147,8 +150,8 @@ process* alloc_process() {
   procs[i].mapped_info[SYSTEM_SEGMENT].npages = 1;
   procs[i].mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
 
-  sprint("in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-    procs[i].trapframe, procs[i].trapframe->regs.sp, procs[i].kstack);
+  sprint("hartid = %d: in alloc_proc. user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+    hid, procs[i].trapframe, procs[i].trapframe->regs.sp, procs[i].kstack);
 
   // initialize the process's heap manager
   procs[i].user_heap.heap_top = USER_FREE_ADDRESS_START + PGSIZE;
@@ -192,7 +195,8 @@ process* alloc_process() {
 // refresh a process, reclaim its resources. added @lab3_1
 //
 void refresh_process(process* proc) {
-  sprint("[DEBUG] Refreshing process %d\n", proc->pid);
+  int hid = read_tp();
+  sprint("[DEBUG] hartid = %d: Refreshing process %d\n", hid, proc->pid);
   memset(proc->trapframe, 0, sizeof(trapframe));
 
   // page directory
@@ -200,6 +204,7 @@ void refresh_process(process* proc) {
   memset((void *)proc->pagetable, 0, PGSIZE);
   uint64 user_stack = (uint64)alloc_page();       //phisical address of user stack bottom
   proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+  proc->trapframe->regs.tp = read_tp();        //store hartid in tp register
 
   // allocates a page to record memory regions (segments)
   memset( proc->mapped_info, 0, PGSIZE );
@@ -224,8 +229,8 @@ void refresh_process(process* proc) {
   proc->mapped_info[SYSTEM_SEGMENT].va = (uint64)trap_sec_start;
   proc->mapped_info[SYSTEM_SEGMENT].npages = 1;
   proc->mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
-  sprint("refresh process %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-    proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
+  sprint("hartid = %d: refresh process %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+    hid, proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
 
   // initialize the process's heap manager
   proc->user_heap.heap_top = USER_FREE_ADDRESS_START + PGSIZE;

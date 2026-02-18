@@ -33,6 +33,7 @@ static void handle_timer() {
 // handle_mtrap calls a handling function according to the type of a machine mode interrupt (trap).
 //
 void handle_mtrap() {
+  int hid = read_tp();
   uint64 mcause = read_csr(mcause);
 
   // added @lab1_challenge2 : 处理非法指令异常，打印源代码行号信息
@@ -40,8 +41,8 @@ void handle_mtrap() {
       uint64 mepc = read_csr(mepc);
 
       // 找到对应的源代码行号
-      addr_line *lines = current->line;
-      int count = current->line_ind;
+      addr_line *lines = current[hid]->line;
+      int count = current[hid]->line_ind;
       addr_line *hit = NULL;
       for (int i = 0; i < count; ++i) {
         if (lines[i].addr > mepc) break;
@@ -49,8 +50,8 @@ void handle_mtrap() {
       }
       if (!hit) { /* 没命中 */ }
 
-      code_file *cur_file = &(current->file)[hit->file];
-      char* dir = (current->dir)[cur_file->dir];
+      code_file *cur_file = &(current[hid]->file)[hit->file];
+      char* dir = (current[hid]->dir)[cur_file->dir];
       char* file = cur_file->file;
       sprint("Runtime error at %s/%s:%d\n", dir, file, hit->line);
 

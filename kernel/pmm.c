@@ -22,6 +22,19 @@ typedef struct node {
 
 // g_free_mem_list is the head of the list of free physical memory pages
 static list_node g_free_mem_list;
+// spinlock protecting the free list
+static volatile int g_pmm_lock = 0;
+
+static inline void pmm_lock() {
+  int tmp;
+  do {
+    asm volatile("amoswap.w %0, %1, (%2)" : "=r"(tmp) : "r"(1), "r"(&g_pmm_lock) : "memory");
+  } while (tmp != 0);
+}
+
+static inline void pmm_unlock() {
+  asm volatile("amoswap.w x0, %0, (%1)" : : "r"(0), "r"(&g_pmm_lock) : "memory");
+}
 
 // used for reference counting of physical pages to implement copy-on-write
 // 全局引用计数数组 & 元数据
@@ -55,10 +68,12 @@ void free_page(void *pa) {
   if (((uint64)pa % PGSIZE) != 0 || (uint64)pa < free_mem_start_addr || (uint64)pa >= free_mem_end_addr)
     panic("free_page 0x%lx \n", pa);
 
+  pmm_lock();
   // insert a physical page to g_free_mem_list
   list_node *n = (list_node *)pa;
   n->next = g_free_mem_list.next;
   g_free_mem_list.next = n;
+  pmm_unlock();
 }
 
 //
@@ -66,9 +81,10 @@ void free_page(void *pa) {
 // Allocates only ONE page!
 //
 void *alloc_page(void) {
+  pmm_lock();
   list_node *n = g_free_mem_list.next;
 
-  uint64 hartid = 0;
+  uint64 hartid = read_tp();
   if (vm_alloc_stage[hartid]) {
     sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
   }
@@ -76,7 +92,7 @@ void *alloc_page(void) {
   if (n) g_free_mem_list.next = n->next;
 
   inc_page_refcount((uint64)n);
-  
+  pmm_unlock();
   return (void *)n;
 }
 

@@ -43,6 +43,8 @@ void insert_to_ready_queue( process* proc ) {
 //
 extern process procs[NPROC];
 void schedule() {
+  int hid = read_tp();
+  sprint( "hartid = %d: will schedule a process to run.\n", hid );
   if ( !ready_queue_head ){
     // by default, if there are no ready process, and all processes are in the status of
     // FREE and ZOMBIE, we should shutdown the emulated RISC-V machine.
@@ -63,11 +65,11 @@ void schedule() {
     }
   }
 
-  current = ready_queue_head;
-  assert( current->status == READY );
+  current[hid] = ready_queue_head;
+  assert( current[hid]->status == READY );
   ready_queue_head = ready_queue_head->queue_next;
 
-  current->status = RUNNING;
-  sprint( "going to schedule process %d to run.\n", current->pid );
-  switch_to( current );
+  current[hid]->status = RUNNING;
+  sprint( "going to schedule process %d to run.\n", current[hid]->pid );
+  switch_to( current[hid] );
 }
