@@ -141,6 +141,18 @@ USER_ERRORLINE_CPPS 		:= user/app_errorline.c user/user_lib.c
 USER_ERRORLINE_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ERRORLINE_CPPS)))
 
 USER_ERRORLINE_TARGET 	:= $(HOSTFS_ROOT)/bin/app_errorline
+
+USER_ALLOC0_CPPS 		:= user/app_alloc0.c user/user_lib.c
+
+USER_ALLOC0_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ALLOC0_CPPS)))
+
+USER_ALLOC0_TARGET 	:= $(OBJ_DIR)/app_alloc0
+
+USER_ALLOC1_CPPS 		:= user/app_alloc1.c user/user_lib.c
+
+USER_ALLOC1_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ALLOC1_CPPS)))
+
+USER_ALLOC1_TARGET 	:= $(OBJ_DIR)/app_alloc1
 #------------------------targets------------------------
 $(OBJ_DIR):
 	@-mkdir -p $(OBJ_DIR)	
@@ -160,6 +172,8 @@ $(OBJ_DIR):
 	@-mkdir -p $(dir $(USER_H_OBJS))
 	@-mkdir -p $(dir $(USER_BACKTRACE_OBJS))
 	@-mkdir -p $(dir $(USER_ERRORLINE_OBJS))
+	@-mkdir -p $(dir $(USER_ALLOC0_OBJS))
+	@-mkdir -p $(dir $(USER_ALLOC1_OBJS))
 
 $(OBJ_DIR)/%.o : %.c
 	@echo "compiling" $<
@@ -263,17 +277,31 @@ $(USER_ERRORLINE_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ERRORLINE_OBJS)
 	@$(COMPILE) --entry=main $(USER_ERRORLINE_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
 
+$(USER_ALLOC0_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ALLOC0_OBJS)
+	@echo "linking" $@	...	
+	@$(COMPILE) --entry=main $(USER_ALLOC0_OBJS) $(UTIL_LIB) -o $@
+	@echo "User app has been built into" \"$@\"
+
+$(USER_ALLOC1_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ALLOC1_OBJS)
+	@echo "linking" $@	...	
+	@$(COMPILE) --entry=main $(USER_ALLOC1_OBJS) $(UTIL_LIB) -o $@
+	@echo "User app has been built into" \"$@\"
+
 -include $(wildcard $(OBJ_DIR)/*/*.d)
 -include $(wildcard $(OBJ_DIR)/*/*/*.d)
 
 .DEFAULT_GOAL := $(all)
 
-all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET) 
+all: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET) $(USER_ALLOC0_TARGET) $(USER_ALLOC1_TARGET)
 .PHONY:all
 
-run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET) 
+run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_TARGET) $(USER_C_TARGET) $(USER_O_TARGET) $(USER_R_TARGET) $(USER_S_TARGET) $(USER_W_TARGET) $(USER_Q_TARGET) $(USER_H_TARGET) $(USER_BACKTRACE_TARGET) $(USER_ERRORLINE_TARGET)
 	@echo "********************HUST PKE********************"
 	spike $(KERNEL_TARGET) /bin/app_shell
+
+run2: $(KERNEL_TARGET) $(USER_ALLOC0_TARGET) $(USER_ALLOC1_TARGET)
+	@echo "********************HUST PKE (dual-core)********************"
+	spike -p2 $(KERNEL_TARGET) $(USER_ALLOC0_TARGET) $(USER_ALLOC1_TARGET)
 
 # need openocd!
 gdb:$(KERNEL_TARGET) $(USER_TARGET)
@@ -292,6 +320,11 @@ gdb_clean:
 objdump:
 	riscv64-unknown-elf-objdump -d $(KERNEL_TARGET) > $(OBJ_DIR)/kernel_dump
 	riscv64-unknown-elf-objdump -d $(USER_TARGET) > $(OBJ_DIR)/user_dump
+
+obj2dump:
+	riscv64-unknown-elf-objdump -d $(KERNEL_TARGET) > $(OBJ_DIR)/kernel_dump
+	riscv64-unknown-elf-objdump -d $(USER_ALLOC0_TARGET) > $(OBJ_DIR)/app_alloc0_dump
+	riscv64-unknown-elf-objdump -d $(USER_ALLOC1_TARGET) > $(OBJ_DIR)/app_alloc1_dump
 
 cscope:
 	find ./ -name "*.c" > cscope.files
