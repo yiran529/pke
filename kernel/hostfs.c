@@ -187,7 +187,8 @@ struct vinode *hostfs_lookup(struct vinode *parent, struct dentry *sub_dentry) {
   char path[MAX_PATH_LEN];
   get_path_string(path, sub_dentry);
 
-  spike_file_t *f = spike_file_open(path, O_RDWR, 0);
+  // Try O_RDONLY first (works for both files and directories)
+  spike_file_t *f = spike_file_open(path, O_RDONLY, 0);
   if ((int64)f < 0) {
     // file open failed, return NULL to indicate file not found
     return NULL;

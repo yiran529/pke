@@ -146,13 +146,13 @@ USER_ALLOC0_CPPS 		:= user/app_alloc0.c user/user_lib.c
 
 USER_ALLOC0_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ALLOC0_CPPS)))
 
-USER_ALLOC0_TARGET 	:= $(OBJ_DIR)/app_alloc0
+USER_ALLOC0_TARGET 	:= $(HOSTFS_ROOT)/bin/app_alloc0
 
 USER_ALLOC1_CPPS 		:= user/app_alloc1.c user/user_lib.c
 
 USER_ALLOC1_OBJS  		:= $(addprefix $(OBJ_DIR)/, $(patsubst %.c,%.o,$(USER_ALLOC1_CPPS)))
 
-USER_ALLOC1_TARGET 	:= $(OBJ_DIR)/app_alloc1
+USER_ALLOC1_TARGET 	:= $(HOSTFS_ROOT)/bin/app_alloc1
 #------------------------targets------------------------
 $(OBJ_DIR):
 	@-mkdir -p $(OBJ_DIR)	
@@ -279,11 +279,13 @@ $(USER_ERRORLINE_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ERRORLINE_OBJS)
 
 $(USER_ALLOC0_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ALLOC0_OBJS)
 	@echo "linking" $@	...	
+	@-mkdir -p $(HOSTFS_ROOT)/bin
 	@$(COMPILE) --entry=main $(USER_ALLOC0_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
 
 $(USER_ALLOC1_TARGET): $(OBJ_DIR) $(UTIL_LIB) $(USER_ALLOC1_OBJS)
-	@echo "linking" $@	...	
+	@echo "linking" $@  ...
+	@-mkdir -p $(HOSTFS_ROOT)/bin
 	@$(COMPILE) --entry=main $(USER_ALLOC1_OBJS) $(UTIL_LIB) -o $@
 	@echo "User app has been built into" \"$@\"
 
@@ -301,9 +303,7 @@ run: $(KERNEL_TARGET) $(USER_TARGET) $(USER_E_TARGET) $(USER_M_TARGET) $(USER_T_
 
 run2: $(KERNEL_TARGET) $(USER_ALLOC0_TARGET) $(USER_ALLOC1_TARGET)
 	@echo "********************HUST PKE (dual-core)********************"
-	spike -p2 $(KERNEL_TARGET) $(USER_ALLOC0_TARGET) $(USER_ALLOC1_TARGET)
-
-# need openocd!
+	spike -p2 $(KERNEL_TARGET) /bin/app_alloc0 /bin/app_alloc1
 gdb:$(KERNEL_TARGET) $(USER_TARGET)
 	spike --rbb-port=9824 -H $(KERNEL_TARGET) $(USER_TARGET) &
 	@sleep 1
