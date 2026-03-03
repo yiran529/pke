@@ -120,8 +120,9 @@ int hostfs_write_back_vinode(struct vinode *vinode) { return 0; }
 //
 int hostfs_update_vinode(struct vinode *vinode) {
   spike_file_t *f = vinode->i_fs_info;
-  if ((int64)f < 0) {  // is a direntry
-    vinode->type = H_DIR;
+  if ((int64)f < 0) {
+    // invalid file handle (error pointer)
+    sprint("hostfs_update_vinode: invalid file handle!\n");
     return -1;
   }
 
@@ -187,6 +188,10 @@ struct vinode *hostfs_lookup(struct vinode *parent, struct dentry *sub_dentry) {
   get_path_string(path, sub_dentry);
 
   spike_file_t *f = spike_file_open(path, O_RDWR, 0);
+  if ((int64)f < 0) {
+    // file open failed, return NULL to indicate file not found
+    return NULL;
+  }
 
   struct vinode *child_inode = hostfs_alloc_vinode(parent->sb);
   child_inode->i_fs_info = f;

@@ -76,7 +76,14 @@ process* load_user_program() {
   size_t argc = parse_args(&arg_bug_msg);
   if (!argc) panic("You need to specify the application program!\n");
 
-  load_bincode_from_host_elf(proc, arg_bug_msg.argv[0]);
+  // in multicore mode, each hart loads a different application
+  int hid = read_tp();
+  if (hid >= argc) {
+    panic("Not enough applications for all harts! Hart %d needs application %d but only %d available.\n", 
+          hid, hid, argc);
+  }
+
+  load_bincode_from_host_elf(proc, arg_bug_msg.argv[hid]);
   return proc;
 }
 
