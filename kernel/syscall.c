@@ -20,7 +20,7 @@
 ssize_t sys_user_print(const char* buf, size_t n) {
   int hid = read_tp();
   // Add hartid to prints so we can distinguish which hart produced the user message.
-  sprint("hartid = %d: %s\n", hid, buf);
+  sprint("hartid = %d: %s", hid, buf);
   return 0;
 }
 

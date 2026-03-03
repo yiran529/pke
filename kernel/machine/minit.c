@@ -48,11 +48,11 @@ riscv_regs g_itrframe[NCPU];
 void init_dtb(uint64 dtb) {
   // defined in spike_interface/spike_htif.c, enabling Host-Target InterFace (HTIF)
   query_htif(dtb);
-  if (htif) sprint("HTIF is available!\r\n");
+  // if (htif) sprint("HTIF is available!\r\n");
 
   // defined in spike_interface/spike_memory.c, obtain information about emulated memory
   query_mem(dtb);
-  sprint("(Emulated) memory size: %ld MB\n", g_mem_size >> 20);
+  // sprint("(Emulated) memory size: %ld MB\n", g_mem_size >> 20);
 }
 
 //
@@ -116,12 +116,12 @@ void m_start(uintptr_t hartid, uintptr_t dtb) {
     init_dtb(dtb);
   }
 
-  sprint("In m_start, hartid:%d\n", hartid);
-
   // Synchronize all harts here: hart0 finishes the unique initialization first, then
   // other harts continue. This prevents secondary harts from touching HTIF/memory info
   // before it is ready.
   sync_barrier(&g_init_barrier, NCPU);
+
+  sprint("In m_start, hartid:%d\n", hartid);
 
   // save the address of trap frame for interrupt in M mode to "mscratch". Use the
   // per-hart slot to avoid corruption when multiple harts take M-mod traps.
