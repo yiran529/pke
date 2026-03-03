@@ -61,6 +61,7 @@ void load_user_program(process *proc) {
   };
   memcpy((void *)proc->heap_pa, &init_chunk, sizeof(heap_chunk_t));
   proc->heap_va = USER_FREE_ADDRESS_START;
+  proc->heap_size = PGSIZE;
 
   sprint("user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n", proc->trapframe,
          proc->trapframe->regs.sp, proc->kstack);

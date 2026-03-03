@@ -49,9 +49,63 @@ ssize_t sys_user_exit(uint64 code) {
 
 /* Below are functions for lab2_challenge2 */
 
+// 扩展堆空间，返回扩展后的新空间起始VA，失败返回0
+uint64 expand_heap(process *p, uint64 needed_size) {
+  // 计算需要扩展的页数
+  uint64 expand_bytes = ALIGN_UP(needed_size, PGSIZE);
+  uint64 new_va = p->heap_va + p->heap_size;  // 新页的VA
+  
+  // 逐页分配并映射
+  for (uint64 i = 0; i < expand_bytes; i += PGSIZE) {
+    void *new_pa = alloc_page();
+    if (!new_pa) {
+      return 0;  // 物理内存不足
+    }
+    memset(new_pa, 0, PGSIZE);
+    
+    // 映射到用户地址空间
+    user_vm_map((pagetable_t)p->pagetable, new_va + i, PGSIZE, (uint64)new_pa,
+                prot_to_type(PROT_WRITE | PROT_READ, 1));
+  }
+  
+  // 将新空间初始化为一个大的空闲块
+  uint64 old_heap_end = p->heap_va + p->heap_size;
+  heap_chunk_t *new_chunk = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)old_heap_end);
+  new_chunk->size = expand_bytes;
+  new_chunk->prev_size = 0;  // 需要根据前一块设置
+  new_chunk->flags = 0;  // free
+  
+  // 尝试与前一个块合并（如果前一个块是空闲的）
+  uint64 last_chunk_va = p->heap_va;
+  uint64 heap_end = old_heap_end;
+  
+  // 找到最后一个块
+  while (last_chunk_va < heap_end) {
+    heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)last_chunk_va);
+    if (!hdr || hdr->size < CHUNK_MIN_SIZE) break;
+    if (last_chunk_va + hdr->size >= heap_end) {
+      // 这是最后一个块
+      if (CHUNK_IS_FREE(hdr)) {
+        // 合并：扩展最后一个空闲块
+        hdr->size += expand_bytes;
+        new_chunk = hdr;
+        old_heap_end = last_chunk_va;
+      } else {
+        // 最后一个块不是空闲的，设置新块的prev_size
+        new_chunk->prev_size = hdr->size;
+      }
+      break;
+    }
+    last_chunk_va += hdr->size;
+  }
+  
+  p->heap_size += expand_bytes;
+  return old_heap_end;
+}
+
 uint64 find_first_fit(process *p, uint64 size) {
   uint64 va = p->heap_va;
-  uint64 heap_limit = p->heap_va + PGSIZE; // 简单堆当前仅一页
+  uint64 heap_limit = p->heap_va + p->heap_size; // 使用heap_size支持多页
   while (va + CHUNK_HDR_SIZE <= heap_limit) {
     // VA -> PA 再访问
     heap_chunk_t *hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)va);
@@ -90,9 +144,20 @@ uint64 sys_user_allocate_page(int n) {
   // user_vm_map((pagetable_t)current->pagetable, va, PGSIZE, (uint64)pa,
   //        prot_to_type(PROT_WRITE | PROT_READ, 1));
   uint64 va = find_first_fit(current, n);
+  
   if (va == 0) {
-    panic("Not supported for now: malloc more than one page or no enough memory in the simple heap!\n");
-    // return 0; // 分配失败
+    // 没有合适的空闲块，尝试扩展堆
+    uint64 needed = ALIGN_UP(n + CHUNK_HDR_SIZE, CHUNK_ALIGN);
+    if (expand_heap(current, needed) == 0) {
+      // 扩展失败
+      panic("Failed to expand heap or out of memory!\n");
+    }
+    
+    // 重新尝试分配
+    va = find_first_fit(current, n);
+    if (va == 0) {
+      panic("Failed to allocate after heap expansion!\n");
+    }
   }
 
   return va + CHUNK_HDR_SIZE; // 返回数据区地址(payload)
@@ -100,7 +165,7 @@ uint64 sys_user_allocate_page(int n) {
 
 void collesce_forward(process *p, heap_chunk_t *hdr, uint64 va) {
   uint64 next_va = va + hdr->size;
-  if (next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
+  if (next_va + CHUNK_HDR_SIZE > p->heap_va + p->heap_size) return; // 越界
 
   heap_chunk_t *next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_va);
   if (!next_hdr) return; // 未映射
@@ -111,7 +176,7 @@ void collesce_forward(process *p, heap_chunk_t *hdr, uint64 va) {
     uint64 next_next_va = next_va + next_hdr->size;
 
     // 处理下下个块的prev_size更新
-    if( next_next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
+    if( next_next_va + CHUNK_HDR_SIZE > p->heap_va + p->heap_size) return; // 越界
     heap_chunk_t *next_next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_next_va);
     if (!next_next_hdr) return; // 未映射
     next_next_hdr->prev_size = hdr->size;
@@ -131,7 +196,7 @@ void collesce_backward(process *p, heap_chunk_t *hdr, uint64 va) {
     uint64 next_va = va + hdr->size;
 
     // 处理下个块的prev_size更新
-    if( next_va + CHUNK_HDR_SIZE > p->heap_va + PGSIZE) return; // 越界
+    if( next_va + CHUNK_HDR_SIZE > p->heap_va + p->heap_size) return; // 越界
     heap_chunk_t *next_hdr = (heap_chunk_t *)user_va_to_pa(p->pagetable, (void*)next_va);
     if (!next_hdr) return; // 未映射
     next_hdr->prev_size = prev_hdr->size;

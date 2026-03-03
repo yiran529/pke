@@ -29,7 +29,9 @@ typedef struct process_t {
   // heap base pa 
   uint64 heap_pa;
   // heap base va
-  uint64 heap_va; 
+  uint64 heap_va;
+  // current heap size in bytes
+  uint64 heap_size;
 }process;
 
 // switch to run user app
