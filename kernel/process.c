@@ -199,8 +199,8 @@ void refresh_process(process* proc) {
   proc->mapped_info[SYSTEM_SEGMENT].va = (uint64)trap_sec_start;
   proc->mapped_info[SYSTEM_SEGMENT].npages = 1;
   proc->mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
-  sprint("refresh process %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
-    proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
+  // sprint("refresh process %d: user frame 0x%lx, user stack 0x%lx, user kstack 0x%lx \n",
+  //   proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
 
   // initialize the process's heap manager
   proc->user_heap.heap_top = USER_FREE_ADDRESS_START;
@@ -328,6 +328,12 @@ int do_fork( process* parent)
           parent->mapped_info[i].npages;
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
+
+        // Print the code segment mapping information
+        uint64 parent_code_pa = lookup_pa(parent->pagetable, parent->mapped_info[i].va);
+        sprint("do_fork map code segment at pa:%016lx of parent to child at va:%016lx.\n", 
+               parent_code_pa, parent->mapped_info[i].va);
+
         break;
       }
       case DATA_SEGMENT: {
@@ -351,9 +357,9 @@ int do_fork( process* parent)
     }
   }
 
-  sprint("do_fork map code segment at pa:%lx of parent %d to child %d at va:0x%lx.\n",
-    lookup_pa(parent->pagetable, parent->mapped_info[CODE_SEGMENT].va),
-    parent->pid, child->pid, parent->mapped_info[CODE_SEGMENT].va );
+  // sprint("do_fork map code segment at pa:%lx of parent to child at va:0x%lx.\n",
+  //   lookup_pa(parent->pagetable, parent->mapped_info[CODE_SEGMENT].va),
+  //   parent->pid, child->pid, parent->mapped_info[CODE_SEGMENT].va );
 
   child->status = READY;
   child->trapframe->regs.a0 = 0;
@@ -364,7 +370,7 @@ int do_fork( process* parent)
 }
 
 int do_exec( process* proc, char* pathname, char* argv ) {
-  sprint( "will exec a new program %s in process %d.\n", pathname, proc->pid );
+  // sprint( "will exec a new program %s in process %d.\n", pathname, proc->pid );
 
   /*
    * -----------------------------------------------------------------
