@@ -283,6 +283,12 @@ int do_fork( process* parent)
           parent->mapped_info[i].npages;
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
+        
+        // Print the code segment mapping information
+        uint64 parent_code_pa = lookup_pa(parent->pagetable, parent->mapped_info[i].va);
+        sprint("do_fork map code segment at pa:%016lx of parent to child at va:%016lx.\n", 
+               parent_code_pa, parent->mapped_info[i].va);
+        
         break;
       }
     }
