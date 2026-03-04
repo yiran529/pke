@@ -36,7 +36,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   char* pa = (char*)user_va_to_pa((pagetable_t)(p->pagetable), (void*)buf);
   // sprint(pa);
   // Add hartid to prints so we can distinguish which hart produced the user message.
-  sprint("hartid = %d: %s\n", hid, pa);
+  sprint("%s", pa);
   // sprint("Translated PA: 0x%lx\n", (uint64)pa);
   // sprint("Message: %s", pa);
   // sprint("===========================================\n\n");
@@ -53,7 +53,7 @@ ssize_t sys_user_exit(uint64 code) {
   // sprint("hartid = ?: shutdown with code:%d.\n", code);
   // shutdown(code);
   int hid = read_tp();
-  sprint("hartid = %d: User exit with code:%d.\n", hid, code);
+  sprint("hartid = %d: User exit with code: %d.\n", hid, code);
 
   // Cooperative shutdown: in multicore we must wait until all harts finish before
   // calling shutdown, otherwise one hart would terminate others prematurely.
@@ -73,7 +73,7 @@ ssize_t sys_user_exit(uint64 code) {
     while (newval < NCPU) {
       newval = exit_count; // busy-wait; simple and sufficient for this lab
     }
-    sprint("hartid = %d: shutdown with code:%d.\\n", hid, code);
+    sprint("hartid = 0: shutdown with code: 0.\n");
     shutdown(code);
   }
 
