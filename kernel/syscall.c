@@ -41,7 +41,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
   char* pa = (char*)user_va_to_pa((pagetable_t)(p->pagetable), (void*)buf);
   // sprint(pa);
   // Add hartid to prints so we can distinguish which hart produced the user message.
-  sprint("hartid = %d: %s\n", hid, pa);
+  sprint("%s", pa);
   // sprint("Translated PA: 0x%lx\n", (uint64)pa);
   // sprint("Message: %s", pa);
   // sprint("===========================================\n\n");
@@ -53,7 +53,7 @@ ssize_t sys_user_print(const char* buf, size_t n) {
 //
 ssize_t sys_user_exit(uint64 code) {
   int hid = read_tp();
-  sprint("hartid = %d: User exit with code:%d.\n", hid, code);
+  sprint("hartid = %d: User exit with code: %d.\n", hid, code);
 
   // Mark the current process as ZOMBIE and schedule the next one.
   // When no runnable processes remain, schedule() will call shutdown().

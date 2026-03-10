@@ -104,8 +104,11 @@ typedef struct process_t {
   // added @lab2_2: for better_malloc
   // heap base pa 
   uint64 heap_pa;
+  // added @lab2_challenge2: for better_malloc and better_free
   // heap base va
   uint64 heap_va; 
+  // current heap size in bytes
+  uint64 heap_size;
 
   // added @lab2_challenge1
   uint64 user_st_top;
