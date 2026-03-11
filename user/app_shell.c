@@ -22,6 +22,7 @@ typedef struct history_item_t {
   char line[HISTORY_LINE_MAX];
 } history_item;
 
+/* Below are helper functions for history management */
 static void history_append(history_item *history, int *history_count, const char *command, const char *para, int bg) {
   if (!history || !history_count || !command || command[0] == '\0')
     return;
@@ -55,6 +56,7 @@ static void history_print_all(history_item *history, int history_count) {
     printu("%5d  %s\n", i + 1, history[i].line);
 }
 
+/* Below are helper functions for environment variable management */
 static void copy_with_limit(char *dst, const char *src, int max_len) {
   if (!dst || !src || max_len <= 0)
     return;
@@ -97,6 +99,18 @@ static void env_print_all(env_item *envs, int env_count) {
     return;
   for (int i = 0; i < env_count; i++)
     printu("%s=%s\n", envs[i].name, envs[i].value);
+}
+
+static void print_command_banner(const char *command, const char *para) {
+  printu("Next command: %s", command);
+  if (para && para[0] != '\0')
+    printu(" %s", para);
+  printu("\n\n");
+  printu("==========Command Start============\n\n");
+}
+
+static void print_command_end(void) {
+  printu("==========Command End============\n\n");
 }
 
 static int parse_set_assignment(char **tsave, char *set_name, char *set_value, int *bg) {
@@ -152,7 +166,7 @@ static int parse_set_assignment(char **tsave, char *set_name, char *set_value, i
 static int parse_next(char *buf, char *command, char *para, int *bg, char *set_name, char *set_value) {
   static char *lsave;  /* outer state: tracks position across lines */
 
-  /* advance to the next non-empty line */
+  /* 1) Advance to the next non-empty line from shellrc. */
   char *line;
   do {
     line = strtok_r(buf, "\n", &lsave);
@@ -162,7 +176,7 @@ static int parse_next(char *buf, char *command, char *para, int *bg, char *set_n
   if (line == NULL)
     return 0;
 
-  /* tokenize within this line only */
+  /* 2) Parse command token and initialize outputs for this line. */
   char *tsave;
   char *tok = strtok_r(line, " \t", &tsave);
   if (tok == NULL)
@@ -173,6 +187,7 @@ static int parse_next(char *buf, char *command, char *para, int *bg, char *set_n
   set_name[0] = '\0';
   set_value[0] = '\0';
 
+  /* 3) "set" has dedicated syntax: set <name> = <value>. */
   if (strcmp(command, "set") == 0) {
     if (parse_set_assignment(&tsave, set_name, set_value, bg) == 0) {
       strcpy(para, set_name);
@@ -181,6 +196,7 @@ static int parse_next(char *buf, char *command, char *para, int *bg, char *set_n
     return 1;
   }
 
+  /* 4) Generic path: optional parameter and optional background '&'. */
   tok = strtok_r(NULL, " \t", &tsave);
   if (tok == NULL)
     return 1;
@@ -205,6 +221,8 @@ int main(int argc, char *argv[]) {
   int nread;
   int MAXBUF = 1024;
   char buf[MAXBUF];
+
+  /* 1) Load all shell commands from /shellrc into memory. */
   fd = open("/shellrc", O_RDONLY);
 
   nread = read_u(fd, buf, MAXBUF - 1);
@@ -216,6 +234,7 @@ int main(int argc, char *argv[]) {
   }
   buf[nread] = '\0';
 
+  /* 2) Initialize runtime state for history/env and parse buffers. */
   history_item *history = (history_item *)naive_malloc();
   int history_count = 0;
   env_item *envs = (env_item *)naive_malloc();
@@ -227,6 +246,8 @@ int main(int argc, char *argv[]) {
   char *set_value = naive_malloc();
   int bg;
   int first = 1;
+
+  /* 3) Parse and execute shellrc line by line. */
   while (1)
   {
     if (!parse_next(first ? buf : NULL, command, para, &bg, set_name, set_value))
@@ -238,27 +259,42 @@ int main(int argc, char *argv[]) {
 
     history_append(history, &history_count, command, para, bg);
 
+    /* 4) Builtin: history printing. */
     if (strcmp(command, "/bin/app_history") == 0 || strcmp(command, "app_history") == 0) {
+      print_command_banner(command, para);
       history_print_all(history, history_count);
+      print_command_end();
       continue;
     }
 
+    /* 5) Builtin: set environment variable. */
     if (strcmp(command, "set") == 0) {
+      if (set_name[0] != '\0' && set_value[0] != '\0')
+        printu("Next command: set %s = %s\n\n", set_name, set_value);
+      else
+        printu("Next command: set\n\n");
+      printu("==========Command Start============\n\n");
+
       if (set_name[0] == '\0' || set_value[0] == '\0') {
         printu("set: invalid syntax, use: set <name> = <value>\n");
       } else {
         env_set(envs, &env_count, set_name, set_value);
+        printu("%s=%s\n", set_name, set_value);
       }
+      print_command_end();
       continue;
     }
 
+    /* 6) Builtin: print all environment variables. */
     if (strcmp(command, "env") == 0) {
+      print_command_banner(command, para);
       env_print_all(envs, env_count);
+      print_command_end();
       continue;
     }
 
-    printu("Next command: %s %s\n\n", command, para);
-    printu("==========Command Start============\n\n");
+    /* 7) External command path: fork + exec (+ optional wait). */
+    print_command_banner(command, para);
     int pid = fork();
     if(pid == 0) {
       int ret = exec(command, para[0] != '\0' ? para : (char*)0);
@@ -273,9 +309,10 @@ int main(int argc, char *argv[]) {
       } else {
         printu("[DEBUG] pid %d running in background.\n", pid);
       }
-      printu("==========Command End============\n\n");
+      print_command_end();
     }
   }
+  /* 8) Shell exits after END or EOF of shellrc buffer. */
   printu("\n ========== Shell End ==========\n\n");
   exit(0);
   return 0;
