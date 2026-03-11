@@ -146,6 +146,89 @@ int hostfs_update_vinode(struct vinode *vinode) {
   return 0;
 }
 
+static int hostfs_index_contains(spike_file_t *index_file, const char *entry_name) {
+  if (!index_file || !entry_name || entry_name[0] == '\0')
+    return 0;
+
+  char buf[256];
+  char line[MAX_FILE_NAME_LEN];
+  int line_len = 0;
+
+  if (spike_file_lseek(index_file, 0, SEEK_SET) < 0)
+    return 0;
+
+  long nread = 0;
+  while ((nread = spike_file_read(index_file, buf, sizeof(buf))) > 0) {
+    for (int i = 0; i < nread; i++) {
+      char ch = buf[i];
+      if (ch == '\r')
+        continue;
+      if (ch == '\n') {
+        if (line_len > 0) {
+          line[line_len] = '\0';
+          if (strcmp(line, entry_name) == 0)
+            return 1;
+          line_len = 0;
+        }
+      } else if (line_len < MAX_FILE_NAME_LEN - 1) {
+        line[line_len++] = ch;
+      }
+    }
+  }
+
+  if (line_len > 0) {
+    line[line_len] = '\0';
+    if (strcmp(line, entry_name) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+static int hostfs_index_append(struct vinode *parent, const char *entry_name) {
+  spike_file_t *parent_file = (spike_file_t *)parent->i_fs_info;
+  if ((int64)parent_file < 0 || !entry_name || entry_name[0] == '\0')
+    return -1;
+
+  spike_file_t *index_file = spike_file_openat(parent_file->kfd, ".index",
+                                               O_RDWR | O_CREAT,
+                                               S_IRUSR | S_IWUSR);
+  if ((int64)index_file < 0)
+    return -1;
+
+  if (!hostfs_index_contains(index_file, entry_name)) {
+    ssize_t end = spike_file_lseek(index_file, 0, SEEK_END);
+    if (end < 0) {
+      spike_file_close(index_file);
+      return -1;
+    }
+
+    if (end > 0) {
+      char tail = '\0';
+      if (spike_file_pread(index_file, &tail, 1, end - 1) != 1) {
+        spike_file_close(index_file);
+        return -1;
+      }
+      if (tail != '\n') {
+        if (spike_file_lseek(index_file, 0, SEEK_END) < 0 ||
+            spike_file_write(index_file, "\n", 1) != 1) {
+          spike_file_close(index_file);
+          return -1;
+        }
+      }
+    }
+
+    if (spike_file_lseek(index_file, 0, SEEK_END) < 0 ||
+        spike_file_write(index_file, entry_name, strlen(entry_name)) < 0 ||
+        spike_file_write(index_file, "\n", 1) < 0) {
+      spike_file_close(index_file);
+      return -1;
+    }
+  }
+
+  spike_file_close(index_file);
+  return 0;
+}
+
 /**** vfs-host-fs interface functions ****/
 //
 // read a hostfs file.
@@ -220,6 +303,9 @@ struct vinode *hostfs_create(struct vinode *parent, struct dentry *sub_dentry) {
 
   if (hostfs_update_vinode(new_inode) != 0) return NULL;
 
+  if (hostfs_index_append(parent, sub_dentry->name) != 0)
+    sprint("hostfs_create: warning, failed to update .index.\n");
+
   new_inode->ref = 0;
   return new_inode;
 }
@@ -253,61 +339,70 @@ int hostfs_unlink(struct vinode *parent, struct dentry *sub_dentry, struct vinod
 }
 
 int hostfs_readdir(struct vinode *dir_vinode, struct dir *dir, int *offset) {
-  // 从 vinode 的 i_fs_info 字段取出目录对应的宿主机文件句柄
-  sprint("[DEBUG] hostfs_readdir: offset: %d\n", *offset);
-  spike_file_t *f = (spike_file_t *)dir_vinode->i_fs_info;
-  if ((int64)f < 0) {
+  spike_file_t *dir_file = (spike_file_t *)dir_vinode->i_fs_info;
+  if ((int64)dir_file < 0) {
     sprint("hostfs_readdir: invalid file handle!\n");
     return -1;
   }
 
-  // 定义 linux_dirent64 结构体，与宿主机 getdents64 系统调用返回的格式一致：
-  //   d_ino(8B)  - inode 编号
-  //   d_off(8B)  - 下一条目在目录文件中的偏移（内核使用，用户层通常不直接用）
-  //   d_reclen(2B) - 本条目占用的字节数（含对齐填充），用于跳到下一条目
-  //   d_type(1B)   - 文件类型（DT_REG / DT_DIR 等）
-  //   d_name(变长)  - 以 '\0' 结尾的文件名
-  struct linux_dirent64 {
-    uint64 d_ino;
-    int64  d_off;
-    uint16 d_reclen;
-    uint8  d_type;
-    char   d_name[0];
-  };
+  // Some Spike/fesvr versions do not support syscall #61 (getdents/getdents64).
+  // Use a per-directory ".index" file to enumerate entries instead.
+  spike_file_t *index_file = spike_file_openat(dir_file->kfd, ".index", O_RDONLY, 0);
+  if ((int64)index_file < 0) {
+    sprint("hostfs_readdir: cannot open .index for this directory.\n");
+    return -1;
+  }
 
-  // hostfs 没有像 rfs 那样在 opendir 时把目录内容缓存到内存，
-  // 每次调用 readdir 都从头重新读取，因此先把文件指针重置到目录开头。
-  spike_file_lseek(f, 0, SEEK_SET);
+  char buf[256];
+  char line[MAX_FILE_NAME_LEN];
+  int line_len = 0;
+  int seen = 0;
+  int target = *offset;
 
-  char buf[512];   // 一次最多向宿主机请求 512 字节的目录项数据
-  long nread;      // 本次 getdents 实际读取的字节数
-  int count = 0;   // 已遍历过的条目计数，用于跳过前 *offset 个条目
-
-  // 循环调用 HTIFSYS_getdents（对应宿主机 getdents64 系统调用），
-  // 每次填满 buf，直到没有更多目录项（nread == 0）或出错（nread < 0）。
-  while ((nread = frontend_syscall(HTIFSYS_getdents, f->kfd,
-                                   (uint64)buf, sizeof(buf), 0, 0, 0, 0)) > 0) {
-    int pos = 0;
-    // 在本批次数据中逐条遍历目录项，利用 d_reclen 字段步进
-    while (pos < nread) {
-      struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + pos);
-      if (count == *offset) {
-        // 找到第 *offset 个条目：将文件名截断复制到 dir->name，
-        // 并记录其 inode 编号，然后将 offset 加 1 供下次调用使用。
-        int i;
-        for (i = 0; i < MAX_FILE_NAME_LEN - 1 && d->d_name[i]; i++)
-          dir->name[i] = d->d_name[i];
-        dir->name[i] = '\0';
-        dir->inum = (int)d->d_ino;
-        (*offset)++;
-        return 0;
+  long nread = 0;
+  while ((nread = spike_file_read(index_file, buf, sizeof(buf))) > 0) {
+    for (int i = 0; i < nread; i++) {
+      char ch = buf[i];
+      if (ch == '\r')
+        continue;
+      if (ch == '\n') {
+        if (line_len > 0) {
+          line[line_len] = '\0';
+          if (seen == target) {
+            int j = 0;
+            for (; j < MAX_FILE_NAME_LEN - 1 && line[j] != '\0'; j++)
+              dir->name[j] = line[j];
+            dir->name[j] = '\0';
+            dir->inum = seen + 1;
+            (*offset)++;
+            spike_file_close(index_file);
+            return 0;
+          }
+          seen++;
+          line_len = 0;
+        }
+      } else if (line_len < MAX_FILE_NAME_LEN - 1) {
+        line[line_len++] = ch;
       }
-      count++;
-      pos += d->d_reclen;  // 按 d_reclen 跳到下一条目（含对齐填充）
     }
   }
 
-  // 所有条目均已遍历完毕，返回 -1 表示没有更多条目
+  // Handle final line without trailing '\n'.
+  if (line_len > 0) {
+    line[line_len] = '\0';
+    if (seen == target) {
+      int j = 0;
+      for (; j < MAX_FILE_NAME_LEN - 1 && line[j] != '\0'; j++)
+        dir->name[j] = line[j];
+      dir->name[j] = '\0';
+      dir->inum = seen + 1;
+      (*offset)++;
+      spike_file_close(index_file);
+      return 0;
+    }
+  }
+
+  spike_file_close(index_file);
   return -1;
 }
 
@@ -334,6 +429,16 @@ struct vinode *hostfs_mkdir(struct vinode *parent, struct dentry *sub_dentry) {
     return NULL;
   }
 
+  // Initialize an empty index for the new directory.
+  spike_file_t *new_index = spike_file_openat(f->kfd, ".index",
+                                              O_RDWR | O_CREAT,
+                                              S_IRUSR | S_IWUSR);
+  if ((int64)new_index >= 0) {
+    spike_file_close(new_index);
+  } else {
+    sprint("hostfs_mkdir: warning, failed to create .index for new directory.\n");
+  }
+
   // 分配一个新的 vfs vinode，将宿主机文件句柄保存到 i_fs_info，
   // 再调用 hostfs_update_vinode 从宿主机 stat 信息中填充 inum/size/type 等字段。
   struct vinode *new_vinode = hostfs_alloc_vinode(parent->sb);
@@ -342,6 +447,9 @@ struct vinode *hostfs_mkdir(struct vinode *parent, struct dentry *sub_dentry) {
     spike_file_close(f);
     return NULL;
   }
+
+  if (hostfs_index_append(parent, sub_dentry->name) != 0)
+    sprint("hostfs_mkdir: warning, failed to update .index.\n");
 
   new_vinode->ref = 0;
   return new_vinode;
