@@ -85,9 +85,9 @@ void *alloc_page(void) {
   list_node *n = g_free_mem_list.next;
 
   uint64 hartid = read_tp();
-  if (vm_alloc_stage[hartid]) {
-    sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
-  }
+  // if (vm_alloc_stage[hartid]) {
+  //   sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
+  // }
   
   if (n) g_free_mem_list.next = n->next;
 

@@ -55,6 +55,11 @@ ssize_t sys_user_exit(uint64 code) {
   int hid = read_tp();
   sprint("hartid = %d: User exit with code: %d.\n", hid, code);
 
+  process* parent = current[hid]->parent;
+    if (parent != NULL && parent->status == BLOCKED) {
+        insert_to_ready_queue(parent);   // 唤醒等待的父进程
+    }
+    
   // Mark the current process as ZOMBIE and schedule the next one.
   // When no runnable processes remain, schedule() will call shutdown().
   current[hid]->status = ZOMBIE;

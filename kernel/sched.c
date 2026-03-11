@@ -61,7 +61,7 @@ void insert_to_ready_queue( process* proc ) {
 extern process procs[NPROC];
 void schedule() {
   int hid = read_tp();
-  sprint( "hartid = %d: will schedule a process to run.\n", hid );
+  sprint( "hartid = %d: will schedule a process to run. (current: %d, state: %d)\n", hid, current[hid] ? current[hid]->pid : -1, current[hid] ? current[hid]->status : -1 );
 
   sched_lock();
   if ( !ready_queue_head ){

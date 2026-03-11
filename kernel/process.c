@@ -633,6 +633,7 @@ int do_wait(int pid) {
       if(p->parent->pid == current[hid]->pid && p->pid == pid) {
         if (p->status != ZOMBIE) {
           current[hid]->status = BLOCKED;
+          // insert_to_ready_queue(current[hid]);
           schedule();
         }
         assert(p->status == ZOMBIE);
@@ -665,6 +666,7 @@ int do_wait(int pid) {
         }
       }
       current[hid]->status=BLOCKED;
+      // insert_to_ready_queue(current[hid]);
       schedule();
     }
 
