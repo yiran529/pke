@@ -254,6 +254,7 @@ int hostfs_unlink(struct vinode *parent, struct dentry *sub_dentry, struct vinod
 
 int hostfs_readdir(struct vinode *dir_vinode, struct dir *dir, int *offset) {
   // 从 vinode 的 i_fs_info 字段取出目录对应的宿主机文件句柄
+  sprint("[DEBUG] hostfs_readdir: offset: %d\n", *offset);
   spike_file_t *f = (spike_file_t *)dir_vinode->i_fs_info;
   if ((int64)f < 0) {
     sprint("hostfs_readdir: invalid file handle!\n");

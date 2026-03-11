@@ -5,13 +5,12 @@
 /bin/app_cat /RAMDISK0/sub_dir/ramfile1
 /bin/app_ls /RAMDISK0/sub_dir
 /bin/app_ls /RAMDISK0
-/bin/app_ls /bin
-/bin/app_relativepath xxx
-/bin/app_semaphore xxx
-/bin/app_cow xxx
-/bin/app_singlepageheap xxx
-/bin/app_print_backtrace xxx
-/bin/app_alloc0 xxx
-/bin/app_errorline xxx
-/bin/app_sum_sequence xxx
+/bin/app_relativepath
+/bin/app_semaphore
+/bin/app_cow
+/bin/app_singlepageheap
+/bin/app_print_backtrace
+/bin/app_alloc0
+/bin/app_errorline
+/bin/app_sum_sequence
 END END

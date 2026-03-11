@@ -1,0 +1,15 @@
+app_alloc0
+app_alloc1
+app_cat
+app_cow
+app_echo
+app_errorline
+app_ls
+app_mkdir
+app_print_backtrace
+app_relativepath
+app_semaphore
+app_shell
+app_singlepageheap
+app_sum_sequence
+app_touch
