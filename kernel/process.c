@@ -209,6 +209,9 @@ process* alloc_process() {
   procs[i].pfiles = init_proc_file_management();
   sprint("in alloc_proc. build proc_file_management successfully.\n");
 
+  // not waiting for any child initially
+  procs[i].waiting_pid = -1;
+
   // return after initialization.
   return &procs[i];
 }
@@ -634,8 +637,10 @@ int do_wait(int pid) {
       }
       if(p->parent->pid == current[hid]->pid && p->pid == pid) {
         if (p->status != ZOMBIE) {
+          current[hid]->waiting_pid = pid;
           current[hid]->status = BLOCKED;
           schedule();
+          current[hid]->waiting_pid = -1;
         }
         assert(p->status == ZOMBIE);
         // user_vm_unmap(p.pagetable, ) ???
@@ -666,8 +671,10 @@ int do_wait(int pid) {
           return p->pid;
         }
       }
+      current[hid]->waiting_pid = -1;  /* waiting for any child */
       current[hid]->status=BLOCKED;
       schedule();
+      current[hid]->waiting_pid = -1;
     }
 
     if(!has_children) {

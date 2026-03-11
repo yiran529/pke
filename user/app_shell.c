@@ -102,8 +102,12 @@ int main(int argc, char *argv[]) {
     }
     else
     {
-      wait(pid);
-      printu("[DEBUG] pid %d finished.\n", pid);
+      if (!bg) {
+        wait(pid);
+        printu("[DEBUG] pid %d finished.\n", pid);
+      } else {
+        printu("[DEBUG] pid %d running in background.\n", pid);
+      }
       printu("==========Command End============\n\n");
     }
   }

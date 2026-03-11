@@ -11,6 +11,7 @@
 /bin/app_singlepageheap
 /bin/app_print_backtrace
 /bin/app_alloc0
-/bin/app_errorline
+/bin/app_alloc1
+/bin/app_errorline 
 /bin/app_sum_sequence
 END END

@@ -56,9 +56,15 @@ ssize_t sys_user_exit(uint64 code) {
   sprint("hartid = %d: User exit with code: %d.\n", hid, code);
 
   process* parent = current[hid]->parent;
-    if (parent != NULL && parent->status == BLOCKED) {
-        insert_to_ready_queue(parent);   // 唤醒等待的父进程
+  if (parent != NULL && parent->status == BLOCKED) {
+    // Only wake the parent if it is waiting for this specific child (waiting_pid == pid)
+    // or waiting for any child (waiting_pid == -1).  Do NOT wake it when it is blocked
+    // for an unrelated reason (e.g. waiting for a different foreground child while this
+    // one ran in the background).
+    if (parent->waiting_pid == -1 || parent->waiting_pid == (int)current[hid]->pid) {
+      insert_to_ready_queue(parent);   // 唤醒等待的父进程
     }
+  }
     
   // Mark the current process as ZOMBIE and schedule the next one.
   // When no runnable processes remain, schedule() will call shutdown().

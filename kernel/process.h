@@ -133,6 +133,9 @@ typedef struct process_t {
   // accounting. added @lab3_3
   int tick_count;
 
+  // pid of the child this process is currently waiting for; -1 if not waiting.
+  int waiting_pid;
+
   // file system. added @lab4_1
   proc_file_management *pfiles;
 
