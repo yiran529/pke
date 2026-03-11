@@ -17,4 +17,6 @@
 // start virtual address (4MB) of our simple heap. added @lab2_2
 #define USER_FREE_ADDRESS_START 0x00000000 + PGSIZE * 1024
 
+// 分配给better malloc的堆空间最大为256页，即1GB；因此从USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE开始的地址才是用于naive_malloc的堆空间
+#define BETTER_MALLOC_HEAP_PAGE_NUM 256 
 #endif

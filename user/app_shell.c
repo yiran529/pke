@@ -49,7 +49,7 @@ int main(int argc, char *argv[]) {
       printu("==========Command End============\n\n");
     }
   }
-  printu("\n[DEBUG] ======== Shell End ========\n\n");
+  printu("\n ========== Shell End ==========\n\n");
   exit(0);
   return 0;
 }

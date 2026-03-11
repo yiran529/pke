@@ -175,12 +175,12 @@ process* alloc_process() {
     hid, procs[i].trapframe, procs[i].trapframe->regs.sp, procs[i].kstack);
 
   // initialize the process's heap manager
-  procs[i].user_heap.heap_top = USER_FREE_ADDRESS_START + PGSIZE;
-  procs[i].user_heap.heap_bottom = USER_FREE_ADDRESS_START + PGSIZE;
+  procs[i].user_heap.heap_top = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
+  procs[i].user_heap.heap_bottom = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
   procs[i].user_heap.free_pages_count = 0;
 
   // map user heap in userspace
-  procs[i].mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START + PGSIZE;
+  procs[i].mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
   procs[i].mapped_info[HEAP_SEGMENT].npages = 0;  // no pages are mapped to heap yet.
   procs[i].mapped_info[HEAP_SEGMENT].seg_type = HEAP_SEGMENT;
 
@@ -188,21 +188,22 @@ process* alloc_process() {
 
   procs[i].user_st_top = USER_STACK_TOP;
 
-    // added @lab2_challenge2: initialize the heap with one big free chunk.
-    procs[i].heap_pa = (uint64)alloc_page();
-    memset((void *)procs[i].heap_pa, 0, PGSIZE);
-    heap_chunk_t init_chunk = {
-        .size = PGSIZE,
-        .prev_size = 0,
-        .flags = 0,
-    };
-    memcpy((void *)procs[i].heap_pa, &init_chunk, sizeof(heap_chunk_t));
-    procs[i].heap_va = USER_FREE_ADDRESS_START;
-    sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", procs[i].heap_va, procs[i].heap_pa);
-    user_vm_map((pagetable_t)procs[i].pagetable, (uint64)procs[i].heap_va, PGSIZE, (uint64)procs[i].heap_pa,
-          prot_to_type(PROT_WRITE | PROT_READ, 1));
-    sprint("[DEBUG] proc addr: 0x%lx, pagetable 0x%lx\n", (uint64)&procs[i], (uint64)procs[i].pagetable);
-    sprint("[DEBUG] Map heap: heap_va 0x%lx -> heap_pa 0x%lx\n", procs[i].heap_va, user_va_to_pa(procs[i].pagetable, (void*)procs[i].heap_va));
+  // added @lab2_challenge2: initialize the heap with one big free chunk.
+  procs[i].heap_pa = (uint64)alloc_page();
+  memset((void *)procs[i].heap_pa, 0, PGSIZE);
+  heap_chunk_t init_chunk = {
+      .size = PGSIZE,
+      .prev_size = 0,
+      .flags = 0,
+  };
+  memcpy((void *)procs[i].heap_pa, &init_chunk, sizeof(heap_chunk_t));
+  procs[i].heap_va = USER_FREE_ADDRESS_START;
+  procs[i].heap_size = PGSIZE; 
+  sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", procs[i].heap_va, procs[i].heap_pa);
+  user_vm_map((pagetable_t)procs[i].pagetable, (uint64)procs[i].heap_va, PGSIZE, (uint64)procs[i].heap_pa,
+        prot_to_type(PROT_WRITE | PROT_READ, 1));
+  sprint("[DEBUG] proc addr: 0x%lx, pagetable 0x%lx\n", (uint64)&procs[i], (uint64)procs[i].pagetable);
+  sprint("[DEBUG] Map heap: heap_va 0x%lx -> heap_pa 0x%lx\n", procs[i].heap_va, user_va_to_pa(procs[i].pagetable, (void*)procs[i].heap_va));
 
   // initialize files_struct
   procs[i].pfiles = init_proc_file_management();
@@ -254,12 +255,12 @@ void refresh_process(process* proc) {
     hid, proc->pid, proc->trapframe, proc->trapframe->regs.sp, proc->kstack);
 
   // initialize the process's heap manager
-  proc->user_heap.heap_top = USER_FREE_ADDRESS_START + PGSIZE;
-  proc->user_heap.heap_bottom = USER_FREE_ADDRESS_START + PGSIZE;
+  proc->user_heap.heap_top = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
+  proc->user_heap.heap_bottom = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
   proc->user_heap.free_pages_count = 0;
 
   // map user heap in userspace
-  proc->mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START + PGSIZE;
+  proc->mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START + BETTER_MALLOC_HEAP_PAGE_NUM * PGSIZE;
   proc->mapped_info[HEAP_SEGMENT].npages = 0;  // no pages are mapped to heap yet.
   proc->mapped_info[HEAP_SEGMENT].seg_type = HEAP_SEGMENT;
 
@@ -272,6 +273,7 @@ void refresh_process(process* proc) {
   };
   memcpy((void *)proc->heap_pa, &init_chunk, sizeof(heap_chunk_t));
   proc->heap_va = USER_FREE_ADDRESS_START;
+  proc->heap_size = PGSIZE;
   sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", proc->heap_va, proc->heap_pa);
   user_vm_map((pagetable_t)proc->pagetable, (uint64)proc->heap_va, PGSIZE, (uint64)proc->heap_pa,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
@@ -633,7 +635,6 @@ int do_wait(int pid) {
       if(p->parent->pid == current[hid]->pid && p->pid == pid) {
         if (p->status != ZOMBIE) {
           current[hid]->status = BLOCKED;
-          // insert_to_ready_queue(current[hid]);
           schedule();
         }
         assert(p->status == ZOMBIE);
@@ -666,7 +667,6 @@ int do_wait(int pid) {
         }
       }
       current[hid]->status=BLOCKED;
-      // insert_to_ready_queue(current[hid]);
       schedule();
     }
 
