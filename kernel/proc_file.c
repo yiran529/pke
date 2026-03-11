@@ -118,6 +118,20 @@ int resolve_path(char* path, char* res_path, struct dentry* cwd) {
   }
 }
 
+static int get_path_type_quiet(const char *resolved_path) {
+  int type = -1;
+  struct dentry *parent = vfs_root_dentry;
+  char miss_name[MAX_PATH_LEN];
+
+  vfs_lock();
+  struct dentry *d = lookup_final_dentry(resolved_path, &parent, miss_name);
+  if (d)
+    type = d->dentry_inode->type;
+  vfs_unlock();
+
+  return type;
+}
+
 
 
 // **************** main proc_file functions *****************
@@ -190,6 +204,10 @@ int do_open(char *pathname, int flags, struct dentry* cwd) {
   int hid = read_tp();
   char resolved_path[MAX_PATH_LEN];
   resolve_path(pathname, resolved_path, cwd);  
+
+  // Quietly reject opening a directory as a regular file. "quietly" means we return -1 without printing diagnostics, to avoid noisy diagnostics in probing callers.
+  if (get_path_type_quiet(resolved_path) == DIR_I)
+    return -1;
 
   struct file *opened_file = NULL;
   if ((opened_file = vfs_open(resolved_path, flags)) == NULL) return -1;
@@ -279,6 +297,10 @@ int do_opendir(char *pathname, struct dentry* cwd) {
   int hid = read_tp();
   char resolved_path[MAX_PATH_LEN];
   resolve_path(pathname, resolved_path, cwd);
+
+  // Quietly reject non-directory paths to avoid noisy diagnostics in probing callers. "Quietly" means we return -1 without printing diagnostics.
+  if (get_path_type_quiet(resolved_path) != DIR_I)
+    return -1;
 
   struct file *opened_file = NULL;
   if ((opened_file = vfs_opendir(resolved_path)) == NULL) return -1;

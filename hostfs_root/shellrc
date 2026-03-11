@@ -19,4 +19,5 @@ set a = -1
 env
 /bin/app_mkdir /bin/test_dir2
 /bin/app_ls /bin
+/bin/app_ls /bin/app_cat
 END END

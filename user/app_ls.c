@@ -110,18 +110,22 @@ int main(int argc, char *argv[]) {
       strcat(child_path, "/");
       strcat(child_path, dir.name);
 
-      // try open() to get stat; directories may fail on hostfs, fall back to opendir_u
+      // Detect directory first, then use open/stat for regular files.
+      int child_dir_fd = opendir_u(child_path);
+      if (child_dir_fd >= 0) {
+        closedir_u(child_dir_fd);
+        printu("%s [DIR]   -\n", name);
+        continue;
+      }
+
       struct istat st;
       int fd = open(child_path, O_RDONLY);
       if (fd >= 0) {
         stat_u(fd, &st);
         close(fd);
-        if (st.st_type == DIR_I)
-          printu("%s [DIR]   -\n", name);
-        else
-          printu("%s [FILE]  %d\n", name, st.st_size);
+        printu("%s [FILE]  %d\n", name, st.st_size);
       } else {
-        printu("%s [DIR]   -\n", name);
+        printu("%s [ERROR] cannot open\n", name);
       }
     }
     closedir_u(dir_fd);
