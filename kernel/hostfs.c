@@ -253,13 +253,97 @@ int hostfs_unlink(struct vinode *parent, struct dentry *sub_dentry, struct vinod
 }
 
 int hostfs_readdir(struct vinode *dir_vinode, struct dir *dir, int *offset) {
-  panic("hostfs_readdir not implemented!\n");
+  // 从 vinode 的 i_fs_info 字段取出目录对应的宿主机文件句柄
+  spike_file_t *f = (spike_file_t *)dir_vinode->i_fs_info;
+  if ((int64)f < 0) {
+    sprint("hostfs_readdir: invalid file handle!\n");
+    return -1;
+  }
+
+  // 定义 linux_dirent64 结构体，与宿主机 getdents64 系统调用返回的格式一致：
+  //   d_ino(8B)  - inode 编号
+  //   d_off(8B)  - 下一条目在目录文件中的偏移（内核使用，用户层通常不直接用）
+  //   d_reclen(2B) - 本条目占用的字节数（含对齐填充），用于跳到下一条目
+  //   d_type(1B)   - 文件类型（DT_REG / DT_DIR 等）
+  //   d_name(变长)  - 以 '\0' 结尾的文件名
+  struct linux_dirent64 {
+    uint64 d_ino;
+    int64  d_off;
+    uint16 d_reclen;
+    uint8  d_type;
+    char   d_name[0];
+  };
+
+  // hostfs 没有像 rfs 那样在 opendir 时把目录内容缓存到内存，
+  // 每次调用 readdir 都从头重新读取，因此先把文件指针重置到目录开头。
+  spike_file_lseek(f, 0, SEEK_SET);
+
+  char buf[512];   // 一次最多向宿主机请求 512 字节的目录项数据
+  long nread;      // 本次 getdents 实际读取的字节数
+  int count = 0;   // 已遍历过的条目计数，用于跳过前 *offset 个条目
+
+  // 循环调用 HTIFSYS_getdents（对应宿主机 getdents64 系统调用），
+  // 每次填满 buf，直到没有更多目录项（nread == 0）或出错（nread < 0）。
+  while ((nread = frontend_syscall(HTIFSYS_getdents, f->kfd,
+                                   (uint64)buf, sizeof(buf), 0, 0, 0, 0)) > 0) {
+    int pos = 0;
+    // 在本批次数据中逐条遍历目录项，利用 d_reclen 字段步进
+    while (pos < nread) {
+      struct linux_dirent64 *d = (struct linux_dirent64 *)(buf + pos);
+      if (count == *offset) {
+        // 找到第 *offset 个条目：将文件名截断复制到 dir->name，
+        // 并记录其 inode 编号，然后将 offset 加 1 供下次调用使用。
+        int i;
+        for (i = 0; i < MAX_FILE_NAME_LEN - 1 && d->d_name[i]; i++)
+          dir->name[i] = d->d_name[i];
+        dir->name[i] = '\0';
+        dir->inum = (int)d->d_ino;
+        (*offset)++;
+        return 0;
+      }
+      count++;
+      pos += d->d_reclen;  // 按 d_reclen 跳到下一条目（含对齐填充）
+    }
+  }
+
+  // 所有条目均已遍历完毕，返回 -1 表示没有更多条目
   return -1;
 }
 
 struct vinode *hostfs_mkdir(struct vinode *parent, struct dentry *sub_dentry) {
-  panic("hostfs_mkdir not implemented!\n");
-  return NULL;
+  // 根据 dentry 链从根到当前节点拼接出完整的宿主机路径，
+  // 例如 "./hostfs_root/dir1/newdir"
+  char path[MAX_PATH_LEN];
+  get_path_string(path, sub_dentry);
+
+  // 通过 HTIFSYS_mkdirat（对应宿主机 mkdirat 系统调用）在宿主机上创建目录。
+  // AT_FDCWD 表示相对当前工作目录解析路径；0755 为目录权限（rwxr-xr-x）。
+  long ret = frontend_syscall(HTIFSYS_mkdirat, AT_FDCWD, (uint64)path,
+                              strlen(path) + 1, 0755, 0, 0, 0);
+  if (ret < 0) {
+    sprint("hostfs_mkdir: failed to create directory on host!\n");
+    return NULL;
+  }
+
+  // 以 O_RDONLY 打开刚创建的目录，获取一个宿主机文件句柄。
+  // hostfs 用这个句柄来执行后续的 stat、readdir 等操作。
+  spike_file_t *f = spike_file_open(path, O_RDONLY, 0);
+  if ((int64)f < 0) {
+    sprint("hostfs_mkdir: failed to open new directory!\n");
+    return NULL;
+  }
+
+  // 分配一个新的 vfs vinode，将宿主机文件句柄保存到 i_fs_info，
+  // 再调用 hostfs_update_vinode 从宿主机 stat 信息中填充 inum/size/type 等字段。
+  struct vinode *new_vinode = hostfs_alloc_vinode(parent->sb);
+  new_vinode->i_fs_info = f;
+  if (hostfs_update_vinode(new_vinode) != 0) {
+    spike_file_close(f);
+    return NULL;
+  }
+
+  new_vinode->ref = 0;
+  return new_vinode;
 }
 
 /**** vfs-hostfs hook interface functions ****/
