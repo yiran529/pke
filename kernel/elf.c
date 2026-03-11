@@ -27,8 +27,8 @@ static void load_debug_line_section(elf_ctx *ctx,
 //
 static void *elf_alloc_mb(elf_ctx *ctx, uint64 elf_pa, uint64 elf_va, uint64 size) {
   elf_info *msg = (elf_info *)ctx->info;
-  // we assume that size of proram segment is smaller than a page.
-  kassert(size < PGSIZE);
+  // one mapping operation handles at most one page.
+  kassert(size <= PGSIZE);
   void *pa = alloc_page();
   if (pa == 0) panic("uvmalloc mem alloc falied\n");
 
@@ -277,12 +277,25 @@ elf_status elf_load(elf_ctx *ctx) {
     if (ph_addr.memsz < ph_addr.filesz) return EL_ERR;
     if (ph_addr.vaddr + ph_addr.memsz < ph_addr.vaddr) return EL_ERR;
 
-    // allocate memory block before elf loading
-    void *dest = elf_alloc_mb(ctx, ph_addr.vaddr, ph_addr.vaddr, ph_addr.memsz);
+    // allocate and load this segment page by page.
+    for (uint64 page_off = 0; page_off < ph_addr.memsz; page_off += PGSIZE) {
+      // clamp to PGSIZE: elf_alloc_mb requires size < PGSIZE; last page may be smaller.
+      uint64 chunk = ph_addr.memsz - page_off;
+      if (chunk > PGSIZE)
+        chunk = PGSIZE;
 
-    // actual loading
-    if (elf_fpread(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
-      return EL_EIO;
+      void *dest = elf_alloc_mb(ctx, ph_addr.vaddr + page_off, ph_addr.vaddr + page_off, chunk);
+
+      // ELF spec: memsz >= filesz; the tail (memsz - filesz) is .bss and must be zero.
+      // alloc_page() already zero-clears each page, so no explicit memset needed.
+      if (page_off < ph_addr.filesz) {
+        uint64 file_chunk = ph_addr.filesz - page_off;
+        if (file_chunk > chunk)
+          file_chunk = chunk;
+        if (elf_fpread(ctx, dest, file_chunk, ph_addr.off + page_off) != file_chunk)
+          return EL_EIO;
+      }
+    }
 
     // record the vm region in proc->mapped_info. added @lab3_1
     int j;
@@ -290,7 +303,8 @@ elf_status elf_load(elf_ctx *ctx) {
       if( (process*)(((elf_info*)(ctx->info))->p)->mapped_info[j].va == 0x0 ) break;
 
     ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].va = ph_addr.vaddr;
-    ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].npages = 1;
+    // ceiling division: a partial last page still needs one full physical page.
+    ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].npages = (ph_addr.memsz + PGSIZE - 1) / PGSIZE;
 
     // SEGMENT_READABLE, SEGMENT_EXECUTABLE, SEGMENT_WRITABLE are defined in kernel/elf.h
     if( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_EXECUTABLE) ){
@@ -367,8 +381,8 @@ typedef struct elf_vfs_info_t {
 //
 static void *elf_alloc_mb_vfs(elf_ctx *ctx, uint64 elf_pa, uint64 elf_va, uint64 size) {
   elf_vfs_info *msg = (elf_vfs_info *)ctx->info;
-  // we assume that size of proram segment is smaller than a page.
-  kassert(size < PGSIZE);
+  // one mapping operation handles at most one page.
+  kassert(size <= PGSIZE);
   void *pa = alloc_page();
   if (pa == 0) panic("uvmalloc mem alloc falied\n");
 
@@ -426,12 +440,25 @@ elf_status elf_load_vfs(elf_ctx *ctx) {
     if (ph_addr.memsz < ph_addr.filesz) return EL_ERR;
     if (ph_addr.vaddr + ph_addr.memsz < ph_addr.vaddr) return EL_ERR;
 
-    // allocate memory block before elf loading
-    void *dest = elf_alloc_mb_vfs(ctx, ph_addr.vaddr, ph_addr.vaddr, ph_addr.memsz);
+    // allocate and load this segment page by page.
+    for (uint64 page_off = 0; page_off < ph_addr.memsz; page_off += PGSIZE) {
+      // clamp to PGSIZE: elf_alloc_mb requires size < PGSIZE; last page may be smaller.
+      uint64 chunk = ph_addr.memsz - page_off;
+      if (chunk > PGSIZE)
+        chunk = PGSIZE;
 
-    // actual loading
-    if (elf_fpread_vfs(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
-      return EL_EIO;
+      void *dest = elf_alloc_mb_vfs(ctx, ph_addr.vaddr + page_off, ph_addr.vaddr + page_off, chunk);
+
+      // ELF spec: memsz >= filesz; the tail (memsz - filesz) is .bss and must be zero.
+      // alloc_page() already zero-clears each page, so no explicit memset needed.
+      if (page_off < ph_addr.filesz) {
+        uint64 file_chunk = ph_addr.filesz - page_off;
+        if (file_chunk > chunk)
+          file_chunk = chunk;
+        if (elf_fpread_vfs(ctx, dest, file_chunk, ph_addr.off + page_off) != file_chunk)
+          return EL_EIO;
+      }
+    }
 
     // record the vm region in proc->mapped_info. added @lab3_1
     int j;
@@ -439,7 +466,8 @@ elf_status elf_load_vfs(elf_ctx *ctx) {
       if( (process*)(((elf_vfs_info*)(ctx->info))->p)->mapped_info[j].va == 0x0 ) break;
 
     ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].va = ph_addr.vaddr;
-    ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].npages = 1;
+    // ceiling division: a partial last page still needs one full physical page.
+    ((process*)(((elf_vfs_info*)(ctx->info))->p))->mapped_info[j].npages = (ph_addr.memsz + PGSIZE - 1) / PGSIZE;
 
     // SEGMENT_READABLE, SEGMENT_EXECUTABLE, SEGMENT_WRITABLE are defined in kernel/elf.h
     if( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_EXECUTABLE) ){

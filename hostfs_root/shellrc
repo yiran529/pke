@@ -12,6 +12,5 @@
 /bin/app_print_backtrace
 /bin/app_alloc0
 /bin/app_alloc1
-/bin/app_errorline 
-/bin/app_sum_sequence
+/bin/app_history
 END END

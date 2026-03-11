@@ -7,6 +7,46 @@
 #include "string.h"
 #include "util/types.h"
 
+#define HISTORY_MAX_ITEMS 32
+#define HISTORY_LINE_MAX 96
+
+typedef struct history_item_t {
+  char line[HISTORY_LINE_MAX];
+} history_item;
+
+static void history_append(history_item *history, int *history_count, const char *command, const char *para, int bg) {
+  if (!history || !history_count || !command || command[0] == '\0')
+    return;
+
+  if (*history_count == HISTORY_MAX_ITEMS) {
+    for (int i = 1; i < HISTORY_MAX_ITEMS; i++)
+      history[i - 1] = history[i];
+    (*history_count)--;
+  }
+
+  int pos = 0;
+  for (int i = 0; command[i] != '\0' && pos < HISTORY_LINE_MAX - 1; i++)
+    history[*history_count].line[pos++] = command[i];
+  if (para[0] != '\0' && pos < HISTORY_LINE_MAX - 1) {
+    history[*history_count].line[pos++] = ' ';
+    for (int i = 0; para[i] != '\0' && pos < HISTORY_LINE_MAX - 1; i++)
+      history[*history_count].line[pos++] = para[i];
+  }
+  if (bg && pos < HISTORY_LINE_MAX - 2) {
+    history[*history_count].line[pos++] = ' ';
+    history[*history_count].line[pos++] = '&';
+  }
+  history[*history_count].line[pos] = '\0';
+  (*history_count)++;
+}
+
+static void history_print_all(history_item *history, int history_count) {
+  if (!history)
+    return;
+  for (int i = 0; i < history_count; i++)
+    printu("%5d  %s\n", i + 1, history[i].line);
+}
+
 /*
  * parse_next - parse the next command from the shellrc buffer.
  *
@@ -73,12 +113,25 @@ static int parse_next(char *buf, char *command, char *para, int *bg) {
 int main(int argc, char *argv[]) {
   printu("\n======== Shell Start ========\n\n");
   int fd;
+  int nread;
   int MAXBUF = 1024;
   char buf[MAXBUF];
   fd = open("/shellrc", O_RDONLY);
 
-  read_u(fd, buf, MAXBUF);
+  nread = read_u(fd, buf, MAXBUF - 1);
   close(fd);
+  if (nread < 0) {
+    printu("read /shellrc failed\n");
+    exit(-1);
+    return -1;
+  }
+  buf[nread] = '\0';
+
+  printu("[DEBUG] Loaded shellrc content:\n%s\n", buf);
+  history_item *history = (history_item *)naive_malloc();
+  int history_count = 0;
+  printu("[DEBUG] history initialized.\n");
+
   char *command = naive_malloc();
   char *para = naive_malloc();
   int bg;
@@ -91,6 +144,13 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(command, "END") == 0)
       break;
+
+    history_append(history, &history_count, command, para, bg);
+
+    if (strcmp(command, "/bin/app_history") == 0 || strcmp(command, "app_history") == 0) {
+      history_print_all(history, history_count);
+      continue;
+    }
 
     printu("Next command: %s %s\n\n", command, para);
     printu("==========Command Start============\n\n");
