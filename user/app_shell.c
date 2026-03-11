@@ -9,6 +9,14 @@
 
 #define HISTORY_MAX_ITEMS 32
 #define HISTORY_LINE_MAX 96
+#define ENV_MAX_ITEMS 32
+#define ENV_NAME_MAX 32
+#define ENV_VALUE_MAX 64
+
+typedef struct env_item_t {
+  char name[ENV_NAME_MAX];
+  char value[ENV_VALUE_MAX];
+} env_item;
 
 typedef struct history_item_t {
   char line[HISTORY_LINE_MAX];
@@ -47,6 +55,77 @@ static void history_print_all(history_item *history, int history_count) {
     printu("%5d  %s\n", i + 1, history[i].line);
 }
 
+static void copy_with_limit(char *dst, const char *src, int max_len) {
+  if (!dst || !src || max_len <= 0)
+    return;
+  int i = 0;
+  for (; src[i] != '\0' && i < max_len - 1; i++)
+    dst[i] = src[i];
+  dst[i] = '\0';
+}
+
+static int env_find(env_item *envs, int env_count, const char *name) {
+  if (!envs || !name)
+    return -1;
+  for (int i = 0; i < env_count; i++) {
+    if (strcmp(envs[i].name, name) == 0)
+      return i;
+  }
+  return -1;
+}
+
+static void env_set(env_item *envs, int *env_count, const char *name, const char *value) {
+  if (!envs || !env_count || !name || !value || name[0] == '\0')
+    return;
+
+  int idx = env_find(envs, *env_count, name);
+  if (idx < 0) {
+    if (*env_count == ENV_MAX_ITEMS) {
+      for (int i = 1; i < ENV_MAX_ITEMS; i++)
+        envs[i - 1] = envs[i];
+      (*env_count)--;
+    }
+    idx = *env_count;
+    (*env_count)++;
+  }
+  copy_with_limit(envs[idx].name, name, ENV_NAME_MAX);
+  copy_with_limit(envs[idx].value, value, ENV_VALUE_MAX);
+}
+
+static void env_print_all(env_item *envs, int env_count) {
+  if (!envs)
+    return;
+  for (int i = 0; i < env_count; i++)
+    printu("%s=%s\n", envs[i].name, envs[i].value);
+}
+
+static int parse_set_assignment(char **tsave, char *set_name, char *set_value, int *bg) {
+  char *tok = strtok_r(NULL, " \t", tsave);
+  if (tok == NULL)
+    return -1;
+  copy_with_limit(set_name, tok, ENV_NAME_MAX);
+
+  tok = strtok_r(NULL, " \t", tsave);
+  if (tok == NULL || strcmp(tok, "=") != 0)
+    return -1;
+
+  tok = strtok_r(NULL, " \t", tsave);
+  if (tok == NULL)
+    return -1;
+  copy_with_limit(set_value, tok, ENV_VALUE_MAX);
+
+  tok = strtok_r(NULL, " \t", tsave);
+  if (tok == NULL)
+    return 0;
+  if (strcmp(tok, "&") == 0) {
+    *bg = 1;
+    tok = strtok_r(NULL, " \t", tsave);
+    if (tok == NULL)
+      return 0;
+  }
+  return -1;
+}
+
 /*
  * parse_next - parse the next command from the shellrc buffer.
  *
@@ -70,7 +149,7 @@ static void history_print_all(history_item *history, int history_count) {
  *
  * Returns 1 if a token was successfully read, 0 if the buffer is exhausted.
  */
-static int parse_next(char *buf, char *command, char *para, int *bg) {
+static int parse_next(char *buf, char *command, char *para, int *bg, char *set_name, char *set_value) {
   static char *lsave;  /* outer state: tracks position across lines */
 
   /* advance to the next non-empty line */
@@ -91,6 +170,16 @@ static int parse_next(char *buf, char *command, char *para, int *bg) {
   strcpy(command, tok);
   *bg = 0;
   para[0] = '\0';
+  set_name[0] = '\0';
+  set_value[0] = '\0';
+
+  if (strcmp(command, "set") == 0) {
+    if (parse_set_assignment(&tsave, set_name, set_value, bg) == 0) {
+      strcpy(para, set_name);
+      return 1;
+    }
+    return 1;
+  }
 
   tok = strtok_r(NULL, " \t", &tsave);
   if (tok == NULL)
@@ -127,18 +216,20 @@ int main(int argc, char *argv[]) {
   }
   buf[nread] = '\0';
 
-  printu("[DEBUG] Loaded shellrc content:\n%s\n", buf);
   history_item *history = (history_item *)naive_malloc();
   int history_count = 0;
-  printu("[DEBUG] history initialized.\n");
+  env_item *envs = (env_item *)naive_malloc();
+  int env_count = 0;
 
   char *command = naive_malloc();
   char *para = naive_malloc();
+  char *set_name = naive_malloc();
+  char *set_value = naive_malloc();
   int bg;
   int first = 1;
   while (1)
   {
-    if (!parse_next(first ? buf : NULL, command, para, &bg))
+    if (!parse_next(first ? buf : NULL, command, para, &bg, set_name, set_value))
       break;
     first = 0;
 
@@ -149,6 +240,20 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(command, "/bin/app_history") == 0 || strcmp(command, "app_history") == 0) {
       history_print_all(history, history_count);
+      continue;
+    }
+
+    if (strcmp(command, "set") == 0) {
+      if (set_name[0] == '\0' || set_value[0] == '\0') {
+        printu("set: invalid syntax, use: set <name> = <value>\n");
+      } else {
+        env_set(envs, &env_count, set_name, set_value);
+      }
+      continue;
+    }
+
+    if (strcmp(command, "env") == 0) {
+      env_print_all(envs, env_count);
       continue;
     }
 

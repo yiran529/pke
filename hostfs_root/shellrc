@@ -13,4 +13,8 @@
 /bin/app_alloc0
 /bin/app_alloc1
 /bin/app_history
+set a = 1
+set b = 10
+set a = -1
+env
 END END
