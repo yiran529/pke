@@ -20,4 +20,5 @@ env
 /bin/app_mkdir /bin/test_dir2
 /bin/app_ls /bin
 /bin/app_ls /bin/app_cat
+/bin/app_echo_0 a.txt | /bin/app_wc
 END END
