@@ -312,12 +312,12 @@ int main(int argc, char *argv[]) {
   char buf[MAXBUF];
 
   /* 1) Load all shell commands from /shellrc into memory. */
-  fd = open("/shellrc_pressure", O_RDONLY);
+  fd = open("/shellrc", O_RDONLY);
 
   nread = read_u(fd, buf, MAXBUF - 1);
   close(fd);
   if (nread < 0) {
-    printu("read /shellrc_pressure failed\n");
+    printu("read /shellrc failed\n");
     exit(-1);
     return -1;
   }

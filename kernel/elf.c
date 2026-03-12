@@ -59,7 +59,7 @@ elf_status elf_init(elf_ctx *ctx, void *info) {
 
   // check the signature (magic value) of the elf
   if (ctx->ehdr.magic != ELF_MAGIC) return EL_NOTELF;
-  sprint("[DEBUG] EL_OK\n");
+  // sprint("[DEBUG] EL_OK\n");
   return EL_OK;
 }
 
