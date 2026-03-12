@@ -21,4 +21,5 @@ env
 /bin/app_ls /bin
 /bin/app_ls /bin/app_cat
 /bin/app_echo_0 a.txt | /bin/app_wc
+/bin/app_ls /bin | /bin/app_wc
 END END

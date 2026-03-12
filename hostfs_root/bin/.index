@@ -6,6 +6,7 @@ app_echo
 app_echo_0
 app_errorline
 app_ls
+app_loop_alloc
 app_mkdir
 app_print_backtrace
 app_relativepath
