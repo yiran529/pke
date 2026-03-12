@@ -57,11 +57,10 @@ ssize_t sys_user_exit(uint64 code) {
 
   process* parent = current[hid]->parent;
   if (parent != NULL && parent->status == BLOCKED) {
-    // Only wake the parent if it is waiting for this specific child (waiting_pid == pid)
-    // or waiting for any child (waiting_pid == -1).  Do NOT wake it when it is blocked
-    // for an unrelated reason (e.g. waiting for a different foreground child while this
-    // one ran in the background).
-    if (parent->waiting_pid == -1 || parent->waiting_pid == (int)current[hid]->pid) {
+    // Only wake the parent if it is blocked in wait():
+    // wait(-1) => WAITPID_ANY_CHILD, wait(pid) => waiting_pid == pid.
+    if (parent->waiting_pid == WAITPID_ANY_CHILD ||
+        parent->waiting_pid == (int)current[hid]->pid) {
       insert_to_ready_queue(parent);   // 唤醒等待的父进程
     }
   }
@@ -78,7 +77,7 @@ ssize_t sys_user_exit(uint64 code) {
 // added @lab1_challenge1
 ssize_t sys_user_print_backtrace(uint32 nlayers) {
   int hid = read_tp();
-  sprint("[DEBUG] hartid = %d: sys_user_print_backtrace called with nlayers=%d\n", hid, nlayers);
+  // sprint("[DEBUG] hartid = %d: sys_user_print_backtrace called with nlayers=%d\n", hid, nlayers);
   // 重新打开 ELF 文件
   arg_buf arg_bug_msg;
   size_t argc = parse_args(&arg_bug_msg);  // 需要将 parse_args 改为非 static
@@ -87,7 +86,7 @@ ssize_t sys_user_print_backtrace(uint32 nlayers) {
   elf_info info;
   
   info.f = vfs_open(current[hid]->exe_path, O_RDONLY);
-  sprint("[DEBUG] hartid = %d: Opened ELF file for backtrace: %s\n", hid, current[hid]->exe_path);
+  // sprint("[DEBUG] hartid = %d: Opened ELF file for backtrace: %s\n", hid, current[hid]->exe_path);
   info.p = current[hid];
   
   if (IS_ERR_VALUE(info.f)) {
@@ -170,7 +169,7 @@ uint64 expand_heap(process *p, uint64 needed_size) {
     // 映射到用户地址空间
     user_vm_map((pagetable_t)p->pagetable, new_va + i, PGSIZE, (uint64)new_pa,
                 prot_to_type(PROT_WRITE | PROT_READ, 1));
-    sprint("[DEBUG] Mapped new page: VA 0x%lx to PA 0x%lx\n", new_va + i, (uint64)new_pa);
+    // sprint("[DEBUG] Mapped new page: VA 0x%lx to PA 0x%lx\n", new_va + i, (uint64)new_pa);
   }
   
   // 将新空间初始化为一个大的空闲块
@@ -432,66 +431,69 @@ ssize_t sys_user_sem_new(int count) {
 
 int sys_user_sem_P(int sem) {
   int hid = read_tp();
-    if(sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
-        return -1; // invalid semaphore
+  sem_lock();
+  if (sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
+    sem_unlock();
+    return -1; // invalid semaphore
+  }
+
+  if (semaphores[sem] > 0) {
+    semaphores[sem]--;
+    sem_unlock();
+    return 1;
+  }
+
+  current[hid]->status = BLOCKED;
+
+  // Avoid duplicate enqueue if the process is already waiting on this semaphore.
+  int unique = 1;
+  for (int i = 0; i < queue_lengths[sem]; i++) {
+    if (queue[sem][i] == current[hid]) {
+      unique = 0;
+      break;
     }
+  }
 
-    while(1) {
-      sem_lock();
-      if(semaphores[sem] > 0) {
-        semaphores[sem]--;
-        sem_unlock();
-        return 1;
-      } else {
-        current[hid] -> status = BLOCKED;
-
-        // make sure the process is not already in the blocked queue
-        int unique = 1;
-        for(int i = 0; i < queue_lengths[sem]; i++) {
-          if (queue[sem][i] == current[hid]) {            
-            unique = 0;
-          }
-        }
-
-        if (unique) {
-          queue[sem][queue_lengths[sem]++] = current[hid]; 
-        }
-
-        current[hid]->trapframe->epc -= 4; // 让被阻塞的进程在恢复时重新执行P操作
-        sem_unlock();
-        schedule();
-      }
+  if (unique) {
+    if (queue_lengths[sem] >= 10) {
+      sem_unlock();
+      panic("sys_user_sem_P: wait queue overflow on sem %d\n", sem);
     }
-    
-    return 0;
+    queue[sem][queue_lengths[sem]++] = current[hid];
+  }
+
+  // schedule() does not return to this blocked syscall frame.
+  // Rewind EPC so user mode retries the P operation after wake-up.
+  current[hid]->trapframe->epc -= 4;
+  sem_unlock();
+  schedule();
+  return 0;
 }
 
 int sys_user_sem_V(int sem) {
-    if(sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
-        return -1; // invalid semaphore
-    }
-
-    sem_lock();
-    semaphores[sem]++;
-
-    if(queue_lengths[sem] == 0) {
-        sem_unlock();
-        return 1; // no process to wake up
-    }
-
-    process* process_to_wake = queue[sem][0];
-    if (process_to_wake == NULL) {
-        sem_unlock();
-        return 1; 
-    }
-
-    for(int i = 1; i < queue_lengths[sem]; i++) {
-        queue[sem][i - 1] = queue[sem][i];
-    }
-    queue_lengths[sem]--;
+  sem_lock();
+  if (sem < 0 || sem >= MAX_SEMAPHORES || semaphores[sem] == -1) {
     sem_unlock();
+    return -1; // invalid semaphore
+  }
+
+  semaphores[sem]++;
+  if (queue_lengths[sem] == 0) {
+    sem_unlock();
+    return 1; // no process to wake up
+  }
+
+  process* process_to_wake = queue[sem][0];
+  for (int i = 1; i < queue_lengths[sem]; i++) {
+    queue[sem][i - 1] = queue[sem][i];
+  }
+  queue_lengths[sem]--;
+  queue[sem][queue_lengths[sem]] = 0;
+  sem_unlock();
+
+  if (process_to_wake)
     insert_to_ready_queue(process_to_wake);
-    return 1;
+  return 1;
 }
 
 ///////////////////////////////////////////////

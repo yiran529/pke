@@ -44,6 +44,12 @@ enum proc_status {
   ZOMBIE,          // terminated but not reclaimed yet
 };
 
+// waiting_pid state:
+//  -2: not waiting in wait()
+//  -1: waiting for any child (wait(-1))
+#define WAITPID_NOT_WAITING (-2)
+#define WAITPID_ANY_CHILD   (-1)
+
 // types of a segment
 enum segment_type {
   STACK_SEGMENT = 0,   // runtime stack segment
@@ -133,7 +139,7 @@ typedef struct process_t {
   // accounting. added @lab3_3
   int tick_count;
 
-  // pid of the child this process is currently waiting for; -1 if not waiting.
+  // pid that wait() is waiting for: WAITPID_NOT_WAITING / WAITPID_ANY_CHILD / child pid.
   int waiting_pid;
 
   // file system. added @lab4_1

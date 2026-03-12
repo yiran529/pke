@@ -68,6 +68,8 @@ void switch_to(process* proc) {
   proc->trapframe->kernel_sp = proc->kstack;      // process's kernel stack
   proc->trapframe->kernel_satp = read_csr(satp);  // kernel page table
   proc->trapframe->kernel_trap = (uint64)smode_trap_handler;
+  // Keep user tp synchronized with the hart that is currently running this process.
+  proc->trapframe->regs.tp = hid;
 
   // SSTATUS_SPP and SSTATUS_SPIE are defined in kernel/riscv.h
   // set S Previous Privilege mode (the SSTATUS_SPP bit in sstatus register) to User mode.
@@ -116,7 +118,7 @@ process* alloc_process() {
   // locate the first usable process structure (under lock to avoid two harts
   // grabbing the same slot)
   proc_lock();
-  sprint("[DEBUG] hartid = %d: Entering alloc_process to find a free process structure.\n", hid);
+  // sprint("[DEBUG] hartid = %d: Entering alloc_process to find a free process structure.\n", hid);
   int i;
 
   for( i=0; i<NPROC; i++ )
@@ -199,18 +201,18 @@ process* alloc_process() {
   memcpy((void *)procs[i].heap_pa, &init_chunk, sizeof(heap_chunk_t));
   procs[i].heap_va = USER_FREE_ADDRESS_START;
   procs[i].heap_size = PGSIZE; 
-  sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", procs[i].heap_va, procs[i].heap_pa);
+  // sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", procs[i].heap_va, procs[i].heap_pa);
   user_vm_map((pagetable_t)procs[i].pagetable, (uint64)procs[i].heap_va, PGSIZE, (uint64)procs[i].heap_pa,
         prot_to_type(PROT_WRITE | PROT_READ, 1));
-  sprint("[DEBUG] proc addr: 0x%lx, pagetable 0x%lx\n", (uint64)&procs[i], (uint64)procs[i].pagetable);
-  sprint("[DEBUG] Map heap: heap_va 0x%lx -> heap_pa 0x%lx\n", procs[i].heap_va, user_va_to_pa(procs[i].pagetable, (void*)procs[i].heap_va));
+  // sprint("[DEBUG] proc addr: 0x%lx, pagetable 0x%lx\n", (uint64)&procs[i], (uint64)procs[i].pagetable);
+  // sprint("[DEBUG] Map heap: heap_va 0x%lx -> heap_pa 0x%lx\n", procs[i].heap_va, user_va_to_pa(procs[i].pagetable, (void*)procs[i].heap_va));
 
   // initialize files_struct
   procs[i].pfiles = init_proc_file_management();
   sprint("in alloc_proc. build proc_file_management successfully.\n");
 
-  // not waiting for any child initially
-  procs[i].waiting_pid = -1;
+  // not waiting for wait() initially
+  procs[i].waiting_pid = WAITPID_NOT_WAITING;
 
   // return after initialization.
   return &procs[i];
@@ -221,7 +223,7 @@ process* alloc_process() {
 //
 void refresh_process(process* proc) {
   int hid = read_tp();
-  sprint("[DEBUG] hartid = %d: Refreshing process %d\n", hid, proc->pid);
+  // sprint("[DEBUG] hartid = %d: Refreshing process %d\n", hid, proc->pid);
   memset(proc->trapframe, 0, sizeof(trapframe));
 
   // page directory
@@ -277,11 +279,12 @@ void refresh_process(process* proc) {
   memcpy((void *)proc->heap_pa, &init_chunk, sizeof(heap_chunk_t));
   proc->heap_va = USER_FREE_ADDRESS_START;
   proc->heap_size = PGSIZE;
-  sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", proc->heap_va, proc->heap_pa);
+  // sprint("[DEBUG] Initialize heap: heap_va 0x%lx, heap_pa 0x%lx\n", proc->heap_va, proc->heap_pa);
   user_vm_map((pagetable_t)proc->pagetable, (uint64)proc->heap_va, PGSIZE, (uint64)proc->heap_pa,
          prot_to_type(PROT_WRITE | PROT_READ, 1));
 
   proc->total_mapped_region = 4;
+  proc->waiting_pid = WAITPID_NOT_WAITING;
   // initialize files_struct
   // proc->pfiles = init_proc_file_management();
   // we might not need to re-initialize proc_file_management here
@@ -619,68 +622,80 @@ int do_exec( process* proc, char* pathname, char* argv ) {
   return 0;
 }
 
+static void reap_zombie_child(process *child) {
+  if (!child || child->status != ZOMBIE)
+    return;
+  // Reclaim process slot so future fork() can reuse it.
+  child->status = FREE;
+  child->parent = 0;
+  child->queue_next = 0;
+  child->waiting_pid = WAITPID_NOT_WAITING;
+  child->tick_count = 0;
+}
+
 int do_wait(int pid) {
   int hid = read_tp();
-
-  sprint("[DEBUG] Entered do_wait %d\n", pid);
-  // pid不合法
-  if(pid < -1 || pid == 0) return -1;
-
-  // 等待特定pid的进程
-  if(pid > 0) {
-    for(int i = 0; i < NPROC; i++) {
-      process* p = &procs[i];
-
-      if(!p->parent) continue;
-      if(p->parent->pid != current[hid]->pid && p->pid == pid) {
-        return -1;
-      }
-      if(p->parent->pid == current[hid]->pid && p->pid == pid) {
-        if (p->status != ZOMBIE) {
-          current[hid]->waiting_pid = pid;
-          current[hid]->status = BLOCKED;
-          schedule();
-          current[hid]->waiting_pid = -1;
-        }
-        assert(p->status == ZOMBIE);
-        // user_vm_unmap(p.pagetable, ) ???
-        // current->status = BLOCKED; ???
-        // p->status = FREE;
-        return p->pid;
-      }
-    }
+  if (pid < -1 || pid == 0) {
+    current[hid]->waiting_pid = WAITPID_NOT_WAITING;
+    return -1;
   }
 
-  // 等待任意一个子进程
-  if(pid == -1) {
-    // sprint("[DEBUG] loop to find a ZOMBIE children process\n");
-    int has_children = 0;
-
-    while(1) {
-      for(int i = 0; i < NPROC; i++) {
-        // sprint("[DEBUG] Check if procs[%d] satisfies\n", i);
-        process *p = &procs[i];
-        if(!p->parent) continue;
-        if(p->parent->pid == current[hid]->pid) {
-          has_children = 1;
-        }
-        if(p->parent->pid == current[hid]->pid && p->status == ZOMBIE) {
-          // user_vm_unmap(p.pagetable, ) ???
-          // current[hid]->status = BLOCKED; ???
-          // p->status = FREE;
-          return p->pid;
-        }
+  // wait(child_pid): block until the specific child becomes ZOMBIE.
+  if (pid > 0) {
+    process* target = 0;
+    for (int i = 0; i < NPROC; i++) {
+      process* p = &procs[i];
+      if (!p->parent || p->parent->pid != current[hid]->pid)
+        continue;
+      if (p->pid == pid) {
+        target = p;
+        break;
       }
-      current[hid]->waiting_pid = -1;  /* waiting for any child */
-      current[hid]->status=BLOCKED;
-      schedule();
-      current[hid]->waiting_pid = -1;
     }
 
-    if(!has_children) {
+    if (!target) {
+      current[hid]->waiting_pid = WAITPID_NOT_WAITING;
       return -1;
     }
+
+    if (target->status == ZOMBIE) {
+      int reaped_pid = target->pid;
+      reap_zombie_child(target);
+      current[hid]->waiting_pid = WAITPID_NOT_WAITING;
+      return reaped_pid;
+    }
+
+    current[hid]->waiting_pid = pid;
+    current[hid]->status = BLOCKED;
+    // schedule() does not return to this kernel frame; retry wait() after wake-up.
+    current[hid]->trapframe->epc -= 4;
+    schedule();
+    return 0;
   }
 
-  return -1;
+  // wait(-1): wait for any child.
+  int has_children = 0;
+  for (int i = 0; i < NPROC; i++) {
+    process *p = &procs[i];
+    if (!p->parent || p->parent->pid != current[hid]->pid)
+      continue;
+    has_children = 1;
+    if (p->status == ZOMBIE) {
+      int reaped_pid = p->pid;
+      reap_zombie_child(p);
+      current[hid]->waiting_pid = WAITPID_NOT_WAITING;
+      return reaped_pid;
+    }
+  }
+
+  if (!has_children) {
+    current[hid]->waiting_pid = WAITPID_NOT_WAITING;
+    return -1;
+  }
+
+  current[hid]->waiting_pid = WAITPID_ANY_CHILD;
+  current[hid]->status = BLOCKED;
+  current[hid]->trapframe->epc -= 4;
+  schedule();
+  return 0;
 }
